@@ -1,0 +1,31 @@
+{
+  "name": "yt-downloader",
+  "version": "1.0.0",
+  "description": "YouTube URL to MP4 converter CLI tool",
+  "main": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "lint": "eslint src/**/*.ts",
+    "format": "prettier --write src/**/*.ts"
+  },
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "cli-progress": "^3.12.0",
+    "commander": "^13.1.0",
+    "ora": "^8.2.0",
+    "which": "^5.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.27.0",
+    "@types/cli-progress": "^3.11.6",
+    "@types/node": "^22.15.17",
+    "@types/which": "^3.0.4",
+    "eslint": "^9.27.0",
+    "eslint-config-prettier": "^10.1.5",
+    "prettier": "^3.5.3",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.32.1"
+  }
+}
