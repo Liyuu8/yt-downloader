@@ -38,20 +38,28 @@ sudo ln -s "$(pwd)/yt-dl.sh" /usr/local/bin/yt-dl
 # 音声のみ MP3 でダウンロード
 ./yt-dl.sh -u "https://www.youtube.com/watch?v=xxxxxxxxx" -a
 
+# プレイリストを一括ダウンロード（URL が playlist?list= なら自動検出）
+./yt-dl.sh -u "https://www.youtube.com/playlist?list=PLxxxxxxxxx"
+
+# watch URL からプレイリスト全体をダウンロード
+./yt-dl.sh -u "https://www.youtube.com/watch?v=xxxxxxxxx&list=PLxxxxxxxxx" -p
+
 # shorts / live URL にも対応
 ./yt-dl.sh -u "https://www.youtube.com/shorts/xxxxxxxxx"
 ```
 
-ダウンロード先はデフォルトで `~/Downloads/downloads/` です。
+ダウンロード先はデフォルトで `~/Downloads/downloads/` です。  
+プレイリストは `downloads/<プレイリスト名>/<連番> - <タイトル>.mp4` の形式で保存されます。
 
 ## オプション一覧
 
-| オプション | 短縮形 | 説明 | デフォルト |
-|-----------|--------|------|-----------|
-| `--url <url>` | `-u` | YouTube の URL（必須） | - |
-| `--output <dir>` | `-o` | 出力ディレクトリ（コンテナ内パス） | `/downloads` |
-| `--quality <quality>` | `-q` | 画質: `best` / `1080` / `720` / `480` / `360` | `best` |
-| `--audio-only` | `-a` | 音声のみ（MP3）でダウンロード | `false` |
+| オプション            | 短縮形 | 説明                                          | デフォルト   |
+| --------------------- | ------ | --------------------------------------------- | ------------ |
+| `--url <url>`         | `-u`   | YouTube の URL（必須）                        | -            |
+| `--output <dir>`      | `-o`   | 出力ディレクトリ（コンテナ内パス）            | `/downloads` |
+| `--quality <quality>` | `-q`   | 画質: `best` / `1080` / `720` / `480` / `360` | `best`       |
+| `--audio-only`        | `-a`   | 音声のみ（MP3）でダウンロード                 | `false`      |
+| `--playlist`          | `-p`   | プレイリスト全体をダウンロード                | `false`      |
 
 ## 対応 URL 形式
 
@@ -59,6 +67,7 @@ sudo ln -s "$(pwd)/yt-dl.sh" /usr/local/bin/yt-dl
 - `https://youtu.be/xxxxxxxxx`
 - `https://www.youtube.com/shorts/xxxxxxxxx`
 - `https://www.youtube.com/live/xxxxxxxxx`
+- `https://www.youtube.com/playlist?list=PLxxxxxxxxx`（自動でプレイリストモード）
 
 ## yt-dlp のアップデート
 

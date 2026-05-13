@@ -11,6 +11,50 @@ interface VideoInfo {
   filesize?: number;
 }
 
+export interface PlaylistInfo {
+  title: string;
+  uploader: string;
+  videoCount: number;
+}
+
+export const fetchPlaylistInfo = (url: string): Promise<PlaylistInfo> => {
+  return new Promise((resolve, reject) => {
+    const args = ['--flat-playlist', '--dump-single-json', url];
+    const proc = spawn('yt-dlp', args);
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`プレイリスト情報の取得に失敗しました: ${stderr}`));
+
+        return;
+      }
+      try {
+        const info = JSON.parse(stdout);
+        resolve({
+          title: (info.title ?? 'Unknown') as string,
+          uploader: (info.uploader ?? info.channel ?? 'Unknown') as string,
+          videoCount: (info.playlist_count ??
+            (info.entries as unknown[])?.length ??
+            0) as number,
+        });
+      } catch {
+        reject(new Error('プレイリスト情報のパースに失敗しました'));
+      }
+    });
+  });
+};
+
 export const fetchVideoInfo = (url: string): Promise<VideoInfo> => {
   return new Promise((resolve, reject) => {
     const args = ['--dump-json', '--no-playlist', url];
@@ -64,18 +108,21 @@ const formatDuration = (seconds: number): string => {
 
 export const downloadVideo = (options: DownloadOptions): Promise<string> => {
   return new Promise((resolve, reject) => {
-    const { url, outputDir, quality, audioOnly, hasFfmpeg } = options;
+    const { url, outputDir, quality, audioOnly, hasFfmpeg, playlist } = options;
     const format = buildFormatSelector(quality, audioOnly, hasFfmpeg);
-    const outputTemplate = path.join(outputDir, '%(title)s.%(ext)s');
+    const outputTemplate = playlist
+      ? path.join(
+          outputDir,
+          '%(playlist_title)s',
+          '%(playlist_index)s - %(title)s.%(ext)s',
+        )
+      : path.join(outputDir, '%(title)s.%(ext)s');
 
-    const args = [
-      '--format',
-      format,
-      '--output',
-      outputTemplate,
-      '--newline',
-      '--no-playlist',
-    ];
+    const args = ['--format', format, '--output', outputTemplate, '--newline'];
+
+    if (!playlist) {
+      args.push('--no-playlist');
+    }
 
     if (audioOnly && hasFfmpeg) {
       args.push('--extract-audio', '--audio-format', 'mp3');
@@ -101,6 +148,8 @@ export const downloadVideo = (options: DownloadOptions): Promise<string> => {
     let progressStarted = false;
     let outputFile = '';
     let stderr = '';
+    let currentVideo = 0;
+    let totalVideos = 0;
 
     proc.stdout.on('data', (data: Buffer) => {
       const lines = data.toString().split('\n');
@@ -108,7 +157,44 @@ export const downloadVideo = (options: DownloadOptions): Promise<string> => {
         const line = rawLine.trim();
         if (!line) continue;
 
-        // HLS: フラグメント数取得 → フラグメント進捗をパーセントに変換
+        // プレイリスト: 動画切り替え検出
+        const videoMatch = line.match(
+          /\[download\] Downloading video (\d+) of (\d+)/,
+        );
+        if (videoMatch) {
+          if (progressStarted) {
+            progressBar.update(100);
+            progressBar.stop();
+            progressStarted = false;
+          }
+          currentVideo = parseInt(videoMatch[1], 10);
+          totalVideos = parseInt(videoMatch[2], 10);
+        }
+
+        // 出力ファイルパスを捕捉（プレイリスト時はタイトルも表示）
+        const destMatch = line.match(
+          /\[(?:download|Merger|ExtractAudio)\] Destination: (.+)/,
+        );
+        if (destMatch) {
+          outputFile = destMatch[1].trim();
+          if (totalVideos > 0) {
+            const title = path
+              .basename(outputFile, path.extname(outputFile))
+              .replace(/^\d+ - /, '');
+            process.stdout.write(
+              `\n  [${currentVideo}/${totalVideos}] ${chalk.yellow(title)}\n`,
+            );
+          }
+        }
+
+        const mergedMatch = line.match(
+          /\[Merger\] Merging formats into "(.+)"/,
+        );
+        if (mergedMatch) {
+          outputFile = mergedMatch[1].trim();
+        }
+
+        // HLS: フラグメント進捗をパーセントに変換
         const itemMatch = line.match(
           /\[download\] Downloading item (\d+) of (\d+)/,
         );
@@ -134,21 +220,6 @@ export const downloadVideo = (options: DownloadOptions): Promise<string> => {
             progressStarted = true;
           }
           progressBar.update(percent);
-        }
-
-        // 出力ファイルパスを捕捉
-        const destMatch = line.match(
-          /\[(?:download|Merger|ExtractAudio)\] Destination: (.+)/,
-        );
-        if (destMatch) {
-          outputFile = destMatch[1].trim();
-        }
-
-        const mergedMatch = line.match(
-          /\[Merger\] Merging formats into "(.+)"/,
-        );
-        if (mergedMatch) {
-          outputFile = mergedMatch[1].trim();
         }
       }
     });

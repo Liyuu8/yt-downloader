@@ -10,6 +10,7 @@ export interface DownloadOptions {
   quality: Quality;
   audioOnly: boolean;
   hasFfmpeg: boolean;
+  playlist: boolean;
 }
 
 export const isValidYouTubeUrl = (url: string): boolean => {
@@ -18,10 +19,14 @@ export const isValidYouTubeUrl = (url: string): boolean => {
     /^https?:\/\/youtu\.be\/[\w-]+/,
     /^https?:\/\/(www\.)?youtube\.com\/shorts\/[\w-]+/,
     /^https?:\/\/(www\.)?youtube\.com\/live\/[\w-]+/,
+    /^https?:\/\/(www\.)?youtube\.com\/playlist\?list=[\w-]+/,
   ];
 
   return patterns.some((pattern) => pattern.test(url));
 };
+
+export const isPlaylistUrl = (url: string): boolean =>
+  /youtube\.com\/playlist\?/.test(url);
 
 export const ensureOutputDir = (dir: string): void => {
   if (!existsSync(dir)) {

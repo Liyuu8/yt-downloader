@@ -3,12 +3,17 @@ import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import { Command } from 'commander';
 import ora from 'ora';
-import { downloadVideo, fetchVideoInfo } from './downloader.js';
+import {
+  downloadVideo,
+  fetchPlaylistInfo,
+  fetchVideoInfo,
+} from './downloader.js';
 import {
   checkFfmpeg,
   checkYtDlp,
   ensureOutputDir,
   getYtDlpVersion,
+  isPlaylistUrl,
   isValidYouTubeUrl,
   type Quality,
 } from './utils.js';
@@ -94,7 +99,8 @@ const main = async (): Promise<void> => {
       },
       'best',
     )
-    .option('-a, --audio-only', '音声のみを MP3 としてダウンロード', false);
+    .option('-a, --audio-only', '音声のみを MP3 としてダウンロード', false)
+    .option('-p, --playlist', 'プレイリスト全体をダウンロード', false);
 
   program.parse(process.argv);
 
@@ -103,6 +109,7 @@ const main = async (): Promise<void> => {
     output: string;
     quality: Quality;
     audioOnly: boolean;
+    playlist: boolean;
   }>();
 
   // URL バリデーション
@@ -111,38 +118,70 @@ const main = async (): Promise<void> => {
     process.exit(1);
   }
 
+  // プレイリストURLは自動的にプレイリストモードに
+  const playlist = opts.playlist || isPlaylistUrl(opts.url);
+
   // 出力先ディレクトリの作成
   const outputDir = path.resolve(opts.output);
   ensureOutputDir(outputDir);
 
-  // 動画情報の取得
-  const infoSpinner = ora({
-    text: '動画情報を取得中...',
-    color: 'cyan',
-  }).start();
+  const qualityLabel = opts.audioOnly
+    ? hasFfmpeg
+      ? 'MP3（音声のみ）'
+      : 'M4A（音声のみ）'
+    : opts.quality === 'best'
+      ? hasFfmpeg
+        ? '最高画質'
+        : '最高画質（360p 上限）'
+      : `${opts.quality}p`;
 
-  let info;
-  try {
-    info = await fetchVideoInfo(opts.url);
-    infoSpinner.succeed(chalk.green('動画情報を取得しました'));
-  } catch (err) {
-    infoSpinner.fail(chalk.red('動画情報の取得に失敗しました'));
-    console.error(chalk.red(`  ${(err as Error).message}`));
-    process.exit(1);
-  }
+  // 情報取得・表示
+  const infoSpinner = ora({ text: '情報を取得中...', color: 'cyan' }).start();
 
-  // 動画情報の表示
-  console.log(`
+  if (playlist) {
+    let playlistInfo;
+    try {
+      playlistInfo = await fetchPlaylistInfo(opts.url);
+      infoSpinner.succeed(chalk.green('プレイリスト情報を取得しました'));
+    } catch (err) {
+      infoSpinner.fail(chalk.red('プレイリスト情報の取得に失敗しました'));
+      console.error(chalk.red(`  ${(err as Error).message}`));
+      process.exit(1);
+    }
+
+    console.log(`
+  ${chalk.bold('📋 プレイリスト情報')}
+  ${chalk.gray('─────────────────────────────────')}
+  ${chalk.white('タイトル :')} ${chalk.yellow(playlistInfo.title)}
+  ${chalk.white('投稿者   :')} ${playlistInfo.uploader}
+  ${chalk.white('動画数   :')} ${playlistInfo.videoCount} 本
+  ${chalk.white('画質     :')} ${qualityLabel}
+  ${chalk.white('出力先   :')} ${chalk.cyan(outputDir)}
+  ${chalk.gray('─────────────────────────────────')}
+`);
+  } else {
+    let info;
+    try {
+      info = await fetchVideoInfo(opts.url);
+      infoSpinner.succeed(chalk.green('動画情報を取得しました'));
+    } catch (err) {
+      infoSpinner.fail(chalk.red('動画情報の取得に失敗しました'));
+      console.error(chalk.red(`  ${(err as Error).message}`));
+      process.exit(1);
+    }
+
+    console.log(`
   ${chalk.bold('📹 動画情報')}
   ${chalk.gray('─────────────────────────────────')}
   ${chalk.white('タイトル :')} ${chalk.yellow(info.title)}
   ${chalk.white('投稿者   :')} ${info.uploader}
   ${chalk.white('長さ     :')} ${info.duration}
   ${chalk.white('サイズ   :')} ${formatFileSize(info.filesize)}
-  ${chalk.white('画質     :')} ${opts.audioOnly ? (hasFfmpeg ? 'MP3（音声のみ）' : 'M4A（音声のみ）') : opts.quality === 'best' ? (hasFfmpeg ? '最高画質' : '最高画質（360p 上限）') : `${opts.quality}p`}
+  ${chalk.white('画質     :')} ${qualityLabel}
   ${chalk.white('出力先   :')} ${chalk.cyan(outputDir)}
   ${chalk.gray('─────────────────────────────────')}
 `);
+  }
 
   // ダウンロード実行
   console.log(chalk.bold('  ⬇️  ダウンロード中...\n'));
@@ -155,6 +194,7 @@ const main = async (): Promise<void> => {
       quality: opts.quality,
       audioOnly: opts.audioOnly,
       hasFfmpeg,
+      playlist,
     });
   } catch (err) {
     console.error(chalk.red(`\n❌ ダウンロードに失敗しました`));
@@ -164,7 +204,7 @@ const main = async (): Promise<void> => {
 
   console.log(`
   ${chalk.bold.green('✅ ダウンロード完了！')}
-  ${chalk.white('保存先:')} ${chalk.cyan(outputFile || outputDir)}
+  ${chalk.white('保存先:')} ${chalk.cyan(playlist ? outputDir : outputFile || outputDir)}
 `);
 };
 
