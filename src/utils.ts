@@ -82,15 +82,15 @@ export const buildFormatSelector = (
   if (hasFfmpeg) {
     // ffmpeg あり: 映像・音声を別々にダウンロードして結合（最高画質）
     const qualityMap: Record<Quality, string> = {
-      best: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
+      best: 'bestvideo[vcodec^=avc][ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc]+bestaudio/bestvideo[ext=mp4]+bestaudio/best',
       '1080':
-        'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]',
+        'bestvideo[vcodec^=avc][ext=mp4][height<=1080]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc][height<=1080]+bestaudio/bestvideo[ext=mp4][height<=1080]+bestaudio/best[height<=1080]',
       '720':
-        'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]',
+        'bestvideo[vcodec^=avc][ext=mp4][height<=720]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc][height<=720]+bestaudio/bestvideo[ext=mp4][height<=720]+bestaudio/best[height<=720]',
       '480':
-        'bestvideo[ext=mp4][height<=480]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]',
+        'bestvideo[vcodec^=avc][ext=mp4][height<=480]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc][height<=480]+bestaudio/bestvideo[ext=mp4][height<=480]+bestaudio/best[height<=480]',
       '360':
-        'bestvideo[ext=mp4][height<=360]+bestaudio[ext=m4a]/bestvideo[height<=360]+bestaudio/best[height<=360]',
+        'bestvideo[vcodec^=avc][ext=mp4][height<=360]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc][height<=360]+bestaudio/bestvideo[ext=mp4][height<=360]+bestaudio/best[height<=360]',
     };
 
     return qualityMap[quality];
