@@ -2,7 +2,11 @@ import { spawn } from 'child_process';
 import path from 'path';
 import chalk from 'chalk';
 import cliProgress from 'cli-progress';
-import { buildFormatSelector, type DownloadOptions } from './utils.js';
+import {
+  buildFormatSelector,
+  getYtDlpBaseArgs,
+  type DownloadOptions,
+} from './utils.js';
 
 interface VideoInfo {
   title: string;
@@ -19,7 +23,7 @@ export interface PlaylistInfo {
 
 export const fetchPlaylistInfo = (url: string): Promise<PlaylistInfo> => {
   return new Promise((resolve, reject) => {
-    const args = ['--flat-playlist', '--dump-single-json', url];
+    const args = [...getYtDlpBaseArgs(), '--flat-playlist', '--dump-single-json', url];
     const proc = spawn('yt-dlp', args);
 
     let stdout = '';
@@ -57,7 +61,7 @@ export const fetchPlaylistInfo = (url: string): Promise<PlaylistInfo> => {
 
 export const fetchVideoInfo = (url: string): Promise<VideoInfo> => {
   return new Promise((resolve, reject) => {
-    const args = ['--dump-json', '--no-playlist', url];
+    const args = [...getYtDlpBaseArgs(), '--dump-json', '--no-playlist', url];
     const proc = spawn('yt-dlp', args);
 
     let stdout = '';
@@ -118,7 +122,14 @@ export const downloadVideo = (options: DownloadOptions): Promise<string> => {
         )
       : path.join(outputDir, '%(title)s.%(ext)s');
 
-    const args = ['--format', format, '--output', outputTemplate, '--newline'];
+    const args = [
+      ...getYtDlpBaseArgs(),
+      '--format',
+      format,
+      '--output',
+      outputTemplate,
+      '--newline',
+    ];
 
     if (!playlist) {
       args.push('--no-playlist');

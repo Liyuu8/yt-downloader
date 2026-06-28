@@ -64,6 +64,30 @@ export const getYtDlpVersion = (): string => {
   }
 };
 
+const hasJsRuntime = (runtime: string): boolean => {
+  try {
+    which.sync(runtime);
+
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** YouTube の n-parameter チャレンジ解決に必要な共通オプション */
+export const getYtDlpBaseArgs = (): string[] => {
+  const args = ['--remote-components', 'ejs:github'];
+
+  if (hasJsRuntime('deno')) {
+    args.push('--js-runtimes', 'deno');
+  }
+  if (hasJsRuntime('node')) {
+    args.push('--js-runtimes', 'node');
+  }
+
+  return args;
+};
+
 export const buildFormatSelector = (
   quality: Quality,
   audioOnly: boolean,
