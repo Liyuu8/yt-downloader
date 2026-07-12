@@ -38,6 +38,9 @@ sudo ln -s "$(pwd)/yt-dl.sh" /usr/local/bin/yt-dl
 # 音声のみ MP3 でダウンロード
 ./yt-dl.sh -u "https://www.youtube.com/watch?v=xxxxxxxxx" -a
 
+# 概要欄・コメントも一緒に取得（ローカルで閲覧可能）
+./yt-dl.sh -u "https://www.youtube.com/watch?v=xxxxxxxxx" -d -c
+
 # プレイリストを一括ダウンロード（URL が playlist?list= なら自動検出）
 ./yt-dl.sh -u "https://www.youtube.com/playlist?list=PLxxxxxxxxx"
 
@@ -60,6 +63,17 @@ sudo ln -s "$(pwd)/yt-dl.sh" /usr/local/bin/yt-dl
 | `--quality <quality>` | `-q`   | 画質: `best` / `1080` / `720` / `480` / `360` | `best`       |
 | `--audio-only`        | `-a`   | 音声のみ（MP3）でダウンロード                 | `false`      |
 | `--playlist`          | `-p`   | プレイリスト全体をダウンロード                | `false`      |
+| `--description`       | `-d`   | 概要欄を `.description` ファイルとして保存    | `false`      |
+| `--comments`          | `-c`   | コメントを取得し `.comments.txt` として保存   | `false`      |
+
+## 概要欄・コメントの保存
+
+`-d`（概要欄）/ `-c`（コメント）を指定すると、動画ファイルと同じ場所・同じファイル名で以下が保存されます。
+
+- `<タイトル>.description` — 概要欄のプレーンテキスト
+- `<タイトル>.comments.txt` — コメント一覧（返信はインデントで表示、上位 200 件まで）
+
+いずれもテキストファイルなので、エディタやターミナルでそのまま閲覧できます。コメント取得は動画によっては時間がかかる場合があります。
 
 ## 対応 URL 形式
 

@@ -7,6 +7,7 @@ import {
   downloadVideo,
   fetchPlaylistInfo,
   fetchVideoInfo,
+  type DownloadResult,
 } from './downloader.js';
 import {
   checkFfmpeg,
@@ -100,7 +101,17 @@ const main = async (): Promise<void> => {
       'best',
     )
     .option('-a, --audio-only', '音声のみを MP3 としてダウンロード', false)
-    .option('-p, --playlist', 'プレイリスト全体をダウンロード', false);
+    .option('-p, --playlist', 'プレイリスト全体をダウンロード', false)
+    .option(
+      '-d, --description',
+      '概要欄を .description ファイルとして取得',
+      false,
+    )
+    .option(
+      '-c, --comments',
+      'コメントを取得し .comments.txt として保存',
+      false,
+    );
 
   program.parse(process.argv);
 
@@ -110,6 +121,8 @@ const main = async (): Promise<void> => {
     quality: Quality;
     audioOnly: boolean;
     playlist: boolean;
+    description: boolean;
+    comments: boolean;
   }>();
 
   // URL バリデーション
@@ -135,6 +148,11 @@ const main = async (): Promise<void> => {
         : '最高画質（360p 上限）'
       : `${opts.quality}p`;
 
+  const extrasParts: string[] = [];
+  if (opts.description) extrasParts.push('概要欄');
+  if (opts.comments) extrasParts.push('コメント');
+  const extrasLabel = extrasParts.length > 0 ? extrasParts.join(' + ') : 'なし';
+
   // 情報取得・表示
   const infoSpinner = ora({ text: '情報を取得中...', color: 'cyan' }).start();
 
@@ -156,6 +174,7 @@ const main = async (): Promise<void> => {
   ${chalk.white('投稿者   :')} ${playlistInfo.uploader}
   ${chalk.white('動画数   :')} ${playlistInfo.videoCount} 本
   ${chalk.white('画質     :')} ${qualityLabel}
+  ${chalk.white('追加取得 :')} ${extrasLabel}
   ${chalk.white('出力先   :')} ${chalk.cyan(outputDir)}
   ${chalk.gray('─────────────────────────────────')}
 `);
@@ -178,6 +197,7 @@ const main = async (): Promise<void> => {
   ${chalk.white('長さ     :')} ${info.duration}
   ${chalk.white('サイズ   :')} ${formatFileSize(info.filesize)}
   ${chalk.white('画質     :')} ${qualityLabel}
+  ${chalk.white('追加取得 :')} ${extrasLabel}
   ${chalk.white('出力先   :')} ${chalk.cyan(outputDir)}
   ${chalk.gray('─────────────────────────────────')}
 `);
@@ -186,15 +206,17 @@ const main = async (): Promise<void> => {
   // ダウンロード実行
   console.log(chalk.bold('  ⬇️  ダウンロード中...\n'));
 
-  let outputFile: string;
+  let result: DownloadResult;
   try {
-    outputFile = await downloadVideo({
+    result = await downloadVideo({
       url: opts.url,
       outputDir,
       quality: opts.quality,
       audioOnly: opts.audioOnly,
       hasFfmpeg,
       playlist,
+      saveDescription: opts.description,
+      saveComments: opts.comments,
     });
   } catch (err) {
     console.error(chalk.red(`\n❌ ダウンロードに失敗しました`));
@@ -204,8 +226,19 @@ const main = async (): Promise<void> => {
 
   console.log(`
   ${chalk.bold.green('✅ ダウンロード完了！')}
-  ${chalk.white('保存先:')} ${chalk.cyan(playlist ? outputDir : outputFile || outputDir)}
-`);
+  ${chalk.white('保存先:')} ${chalk.cyan(playlist ? outputDir : result.outputFile || outputDir)}`);
+
+  if (result.descriptionFiles.length > 0) {
+    console.log(
+      `  ${chalk.white('概要欄:')} ${chalk.cyan(`${result.descriptionFiles.length} 件の .description ファイルを保存`)}`,
+    );
+  }
+  if (result.commentsFiles.length > 0) {
+    console.log(
+      `  ${chalk.white('コメント:')} ${chalk.cyan(`${result.commentsFiles.length} 件の .comments.txt ファイルを保存`)}`,
+    );
+  }
+  console.log('');
 };
 
 main().catch((err: unknown) => {
