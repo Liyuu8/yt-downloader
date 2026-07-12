@@ -112,3 +112,72 @@ pip install --upgrade 'yt-dlp[default]'
 - 著作権で保護されたコンテンツのダウンロードは、YouTube の利用規約に違反する可能性があります
 - 自身がアップロードした動画、クリエイティブ・コモンズ動画、著作権フリーコンテンツのバックアップ用途でご使用ください
 - 本ツールは個人学習・研究目的で作成されています
+
+## Chrome 拡張機能
+
+YouTube のフィード（登録チャンネル、ホーム、検索結果など）のサムネイル上から直接ダウンロードできる Chrome 拡張機能です。  
+既存の yt-dlp ロジックをローカル API サーバー経由で利用します。
+
+### 前提条件
+
+- [Google Chrome](https://www.google.com/chrome/)
+- ローカル API サーバーの実行環境（以下のどちらか）
+  - **Docker**（推奨・ホストを汚さない）: [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+  - **ホスト直接実行**: yt-dlp・ffmpeg（任意）・deno（任意）
+
+```bash
+# ホスト直接実行する場合のみ必要
+brew install yt-dlp ffmpeg deno
+```
+
+### セットアップ
+
+**1. ローカル API サーバーを起動**
+
+Docker の場合（yt-dlp・ffmpeg をホストにインストール不要）:
+
+```bash
+docker build -t yt-downloader .
+chmod +x yt-dl-server.sh   # 初回のみ
+./yt-dl-server.sh
+```
+
+ホストに直接インストールする場合:
+
+```bash
+npm install
+npm run server
+```
+
+サーバーは `http://127.0.0.1:8765` で待ち受け（Docker の場合もホストのループバックにのみ公開）、ダウンロード先は `~/Downloads/downloads/` です。
+
+**2. Chrome 拡張機能を読み込む**
+
+1. Chrome で `chrome://extensions` を開く
+2. 「デベロッパーモード」を ON
+3. 「パッケージ化されていない拡張機能を読み込む」
+4. プロジェクト内の `extension/` フォルダを選択
+
+**3. 使い方**
+
+1. サーバー（`./yt-dl-server.sh` または `npm run server`）が起動していることを確認
+2. [YouTube 登録チャンネル](https://www.youtube.com/feed/subscriptions) などを開く
+3. 動画サムネイルにマウスを乗せると ⬇ ボタンが表示される
+4. ボタンをクリックするとダウンロードが開始される
+
+拡張機能のアイコンをクリックすると、画質・音声のみ・サーバー URL の設定ができます。
+
+### 対応ページ
+
+- `/feed/subscriptions`（登録チャンネル）
+- `/`（ホーム）
+- `/results`（検索結果）
+- チャンネルの動画一覧
+- サイドバーのおすすめ動画
+
+### 環境変数（サーバー）
+
+| 変数            | 説明               | デフォルト                    |
+| --------------- | ------------------ | ----------------------------- |
+| `YT_DL_PORT`    | サーバーポート     | `8765`                        |
+| `YT_DL_OUTPUT`  | 出力ディレクトリ   | `~/Downloads/downloads`       |

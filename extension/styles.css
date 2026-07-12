@@ -1,0 +1,94 @@
+.yt-dl-host {
+  position: relative;
+}
+
+.yt-dl-btn {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  z-index: 20;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, transform 0.1s ease;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: 'Roboto', 'YouTube Sans', sans-serif;
+  pointer-events: auto;
+}
+
+ytd-rich-item-renderer:hover .yt-dl-btn,
+ytd-grid-video-renderer:hover .yt-dl-btn,
+ytd-compact-video-renderer:hover .yt-dl-btn,
+ytd-video-renderer:hover .yt-dl-btn,
+yt-lockup-view-model:hover .yt-dl-btn,
+.yt-dl-host:hover .yt-dl-btn,
+ytd-thumbnail:hover .yt-dl-btn,
+yt-thumbnail-view-model:hover .yt-dl-btn,
+a.yt-lockup-view-model__content-image:hover .yt-dl-btn,
+a.ytLockupViewModelContentImage:hover .yt-dl-btn,
+.yt-dl-btn:focus-visible {
+  opacity: 1;
+}
+
+.yt-dl-btn:hover {
+  background: rgba(255, 0, 0, 0.9);
+  transform: scale(1.08);
+}
+
+.yt-dl-btn.yt-dl-loading {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.85);
+  cursor: wait;
+}
+
+.yt-dl-btn.yt-dl-done {
+  opacity: 1;
+  background: rgba(34, 139, 34, 0.9);
+}
+
+.yt-dl-btn.yt-dl-error {
+  opacity: 1;
+  background: rgba(200, 0, 0, 0.9);
+}
+
+.yt-dl-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+#yt-dl-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: rgba(30, 30, 30, 0.95);
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: 'Roboto', 'YouTube Sans', sans-serif;
+  z-index: 99999;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  max-width: 420px;
+  text-align: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+#yt-dl-toast.yt-dl-toast-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}

@@ -32,4 +32,5 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
 
 VOLUME ["/downloads"]
+EXPOSE 8765
 ENTRYPOINT ["node", "dist/index.js"]

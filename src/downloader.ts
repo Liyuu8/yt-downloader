@@ -181,6 +181,7 @@ export const downloadVideo = (
       playlist,
       saveDescription,
       saveComments,
+      onProgress,
     } = options;
     const format = buildFormatSelector(quality, audioOnly, hasFfmpeg);
     const outputTemplate = playlist
@@ -223,20 +224,22 @@ export const downloadVideo = (
 
     args.push(url);
 
-    // PYTHONUNBUFFERED=1 でPythonのstdoutバッファリングを無効化し、リアルタイム進捗を受信する
     const proc = spawn('yt-dlp', args, {
       env: { ...process.env, PYTHONUNBUFFERED: '1' },
     });
 
-    const progressBar = new cliProgress.SingleBar(
-      {
-        format: `  ${chalk.cyan('{bar}')} ${chalk.yellow('{percentage}%')} | {eta_formatted} 残り`,
-        barCompleteChar: '█',
-        barIncompleteChar: '░',
-        hideCursor: true,
-      },
-      cliProgress.Presets.shades_classic,
-    );
+    const useCliProgress = !onProgress;
+    const progressBar = useCliProgress
+      ? new cliProgress.SingleBar(
+          {
+            format: `  ${chalk.cyan('{bar}')} ${chalk.yellow('{percentage}%')} | {eta_formatted} 残り`,
+            barCompleteChar: '█',
+            barIncompleteChar: '░',
+            hideCursor: true,
+          },
+          cliProgress.Presets.shades_classic,
+        )
+      : null;
 
     let progressStarted = false;
     let outputFile = '';
@@ -245,6 +248,17 @@ export const downloadVideo = (
     let totalVideos = 0;
     const descriptionFiles: string[] = [];
     const infoJsonFiles: string[] = [];
+
+    const reportProgress = (percent: number, title?: string): void => {
+      if (onProgress) {
+        onProgress({
+          percent,
+          title,
+          currentVideo: totalVideos > 0 ? currentVideo : undefined,
+          totalVideos: totalVideos > 0 ? totalVideos : undefined,
+        });
+      }
+    };
 
     proc.stdout.on('data', (data: Buffer) => {
       const lines = data.toString().split('\n');
@@ -257,7 +271,7 @@ export const downloadVideo = (
           /\[download\] Downloading video (\d+) of (\d+)/,
         );
         if (videoMatch) {
-          if (progressStarted) {
+          if (progressStarted && progressBar) {
             progressBar.update(100);
             progressBar.stop();
             progressStarted = false;
@@ -272,13 +286,16 @@ export const downloadVideo = (
         );
         if (destMatch) {
           outputFile = destMatch[1].trim();
+          const title = path
+            .basename(outputFile, path.extname(outputFile))
+            .replace(/^\d+ - /, '');
           if (totalVideos > 0) {
-            const title = path
-              .basename(outputFile, path.extname(outputFile))
-              .replace(/^\d+ - /, '');
-            process.stdout.write(
-              `\n  [${currentVideo}/${totalVideos}] ${chalk.yellow(title)}\n`,
-            );
+            if (useCliProgress) {
+              process.stdout.write(
+                `\n  [${currentVideo}/${totalVideos}] ${chalk.yellow(title)}\n`,
+              );
+            }
+            reportProgress(0, title);
           }
         }
 
@@ -313,11 +330,15 @@ export const downloadVideo = (
           const total = parseInt(itemMatch[2], 10);
           if (total > 0) {
             const percent = (current / total) * 100;
-            if (!progressStarted) {
-              progressBar.start(100, 0);
-              progressStarted = true;
+            if (useCliProgress && progressBar) {
+              if (!progressStarted) {
+                progressBar.start(100, 0);
+                progressStarted = true;
+              }
+              progressBar.update(percent);
+            } else {
+              reportProgress(percent);
             }
-            progressBar.update(percent);
           }
         }
 
@@ -325,11 +346,15 @@ export const downloadVideo = (
         const progressMatch = line.match(/\[download\]\s+([\d.]+)%/);
         if (progressMatch) {
           const percent = parseFloat(progressMatch[1]);
-          if (!progressStarted) {
-            progressBar.start(100, 0);
-            progressStarted = true;
+          if (useCliProgress && progressBar) {
+            if (!progressStarted) {
+              progressBar.start(100, 0);
+              progressStarted = true;
+            }
+            progressBar.update(percent);
+          } else {
+            reportProgress(percent);
           }
-          progressBar.update(percent);
         }
       }
     });
@@ -339,7 +364,7 @@ export const downloadVideo = (
     });
 
     proc.on('close', (code) => {
-      if (progressStarted) {
+      if (progressStarted && progressBar) {
         progressBar.update(100);
         progressBar.stop();
       }

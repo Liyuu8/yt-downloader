@@ -4,6 +4,13 @@ import which from 'which';
 
 export type Quality = 'best' | '1080' | '720' | '480' | '360';
 
+export interface DownloadProgress {
+  percent: number;
+  title?: string;
+  currentVideo?: number;
+  totalVideos?: number;
+}
+
 export interface DownloadOptions {
   url: string;
   outputDir: string;
@@ -13,6 +20,7 @@ export interface DownloadOptions {
   playlist: boolean;
   saveDescription: boolean;
   saveComments: boolean;
+  onProgress?: (progress: DownloadProgress) => void;
 }
 
 export const isValidYouTubeUrl = (url: string): boolean => {
