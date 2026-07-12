@@ -28,6 +28,8 @@ interface Job {
   createdAt: number;
   quality: Quality;
   audioOnly: boolean;
+  saveDescription: boolean;
+  saveComments: boolean;
 }
 
 const jobs = new Map<string, Job>();
@@ -110,8 +112,8 @@ const processQueue = async (): Promise<void> => {
       audioOnly: job.audioOnly,
       hasFfmpeg,
       playlist: false,
-      saveDescription: false,
-      saveComments: false,
+      saveDescription: job.saveDescription,
+      saveComments: job.saveComments,
       onProgress: (progress) => {
         job.progress = progress.percent;
         if (progress.title) {
@@ -136,6 +138,8 @@ const createJob = (
   url: string,
   quality: Quality,
   audioOnly: boolean,
+  saveDescription: boolean,
+  saveComments: boolean,
 ): Job => {
   const job: Job = {
     id: randomUUID(),
@@ -145,6 +149,8 @@ const createJob = (
     createdAt: Date.now(),
     quality,
     audioOnly,
+    saveDescription,
+    saveComments,
   };
   jobs.set(job.id, job);
   jobQueue.push(job.id);
@@ -216,7 +222,13 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    let body: { url?: string; quality?: Quality; audioOnly?: boolean };
+    let body: {
+      url?: string;
+      quality?: Quality;
+      audioOnly?: boolean;
+      saveDescription?: boolean;
+      saveComments?: boolean;
+    };
     try {
       body = JSON.parse(await readBody(req)) as typeof body;
     } catch {
@@ -236,7 +248,13 @@ const server = http.createServer(async (req, res) => {
       ? (body.quality as Quality)
       : 'best';
 
-    const job = createJob(body.url, quality, body.audioOnly ?? false);
+    const job = createJob(
+      body.url,
+      quality,
+      body.audioOnly ?? false,
+      body.saveDescription ?? false,
+      body.saveComments ?? false,
+    );
     respond(202, {
       jobId: job.id,
       status: job.status,

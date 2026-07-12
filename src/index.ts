@@ -230,7 +230,7 @@ const main = async (): Promise<void> => {
 
   if (result.descriptionFiles.length > 0) {
     console.log(
-      `  ${chalk.white('概要欄:')} ${chalk.cyan(`${result.descriptionFiles.length} 件の .description ファイルを保存`)}`,
+      `  ${chalk.white('概要欄:')} ${chalk.cyan(`${result.descriptionFiles.length} 件の .description.txt ファイルを保存`)}`,
     );
   }
   if (result.commentsFiles.length > 0) {

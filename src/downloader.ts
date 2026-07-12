@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { readFile, writeFile, unlink } from 'fs/promises';
+import { readFile, writeFile, unlink, rename } from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
 import cliProgress from 'cli-progress';
@@ -376,6 +376,18 @@ export const downloadVideo = (
       }
 
       void (async () => {
+        // .description のままだとダブルクリックで開けるアプリが認識されないため .txt を付与する
+        const renamedDescriptionFiles: string[] = [];
+        for (const descFile of descriptionFiles) {
+          try {
+            const renamed = `${descFile}.txt`;
+            await rename(descFile, renamed);
+            renamedDescriptionFiles.push(renamed);
+          } catch {
+            renamedDescriptionFiles.push(descFile);
+          }
+        }
+
         const commentsFiles: string[] = [];
 
         if (saveComments) {
@@ -404,7 +416,11 @@ export const downloadVideo = (
           }
         }
 
-        resolve({ outputFile, descriptionFiles, commentsFiles });
+        resolve({
+          outputFile,
+          descriptionFiles: renamedDescriptionFiles,
+          commentsFiles,
+        });
       })();
     });
   });

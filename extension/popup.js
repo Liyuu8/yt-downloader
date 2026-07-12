@@ -1,6 +1,8 @@
 const serverUrlInput = document.getElementById('serverUrl');
 const qualitySelect = document.getElementById('quality');
 const audioOnlyCheckbox = document.getElementById('audioOnly');
+const saveDescriptionCheckbox = document.getElementById('saveDescription');
+const saveCommentsCheckbox = document.getElementById('saveComments');
 const statusEl = document.getElementById('status');
 const saveBtn = document.getElementById('save');
 
@@ -9,10 +11,14 @@ const loadSettings = async () => {
     serverUrl: 'http://127.0.0.1:8765',
     quality: 'best',
     audioOnly: false,
+    saveDescription: false,
+    saveComments: false,
   });
   serverUrlInput.value = settings.serverUrl;
   qualitySelect.value = settings.quality;
   audioOnlyCheckbox.checked = settings.audioOnly;
+  saveDescriptionCheckbox.checked = settings.saveDescription;
+  saveCommentsCheckbox.checked = settings.saveComments;
 };
 
 const checkHealth = async () => {
@@ -37,6 +43,8 @@ saveBtn.addEventListener('click', async () => {
     serverUrl: serverUrlInput.value.trim(),
     quality: qualitySelect.value,
     audioOnly: audioOnlyCheckbox.checked,
+    saveDescription: saveDescriptionCheckbox.checked,
+    saveComments: saveCommentsCheckbox.checked,
   });
   await checkHealth();
 });

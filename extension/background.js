@@ -7,6 +7,8 @@ const getSettings = async () => {
     serverUrl: DEFAULT_SERVER,
     quality: 'best',
     audioOnly: false,
+    saveDescription: false,
+    saveComments: false,
   });
 };
 
@@ -102,6 +104,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             url: message.url,
             quality: settings.quality,
             audioOnly: settings.audioOnly,
+            saveDescription: settings.saveDescription,
+            saveComments: settings.saveComments,
           }),
         });
 
