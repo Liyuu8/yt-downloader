@@ -11,6 +11,8 @@ export interface DownloadOptions {
   audioOnly: boolean;
   hasFfmpeg: boolean;
   playlist: boolean;
+  saveDescription: boolean;
+  saveComments: boolean;
 }
 
 export const isValidYouTubeUrl = (url: string): boolean => {

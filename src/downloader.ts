@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { readFile, writeFile, unlink } from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
 import cliProgress from 'cli-progress';
@@ -23,7 +24,12 @@ export interface PlaylistInfo {
 
 export const fetchPlaylistInfo = (url: string): Promise<PlaylistInfo> => {
   return new Promise((resolve, reject) => {
-    const args = [...getYtDlpBaseArgs(), '--flat-playlist', '--dump-single-json', url];
+    const args = [
+      ...getYtDlpBaseArgs(),
+      '--flat-playlist',
+      '--dump-single-json',
+      url,
+    ];
     const proc = spawn('yt-dlp', args);
 
     let stdout = '';
@@ -98,6 +104,52 @@ export const fetchVideoInfo = (url: string): Promise<VideoInfo> => {
   });
 };
 
+interface CommentEntry {
+  id: string;
+  text: string;
+  author?: string;
+  like_count?: number;
+  time_text?: string;
+  parent?: string;
+}
+
+/** yt-dlp の info.json 内のコメントをスレッド形式の読みやすいテキストに整形する */
+const formatComments = (title: string, comments: CommentEntry[]): string => {
+  const repliesByParent = new Map<string, CommentEntry[]>();
+  const topLevel: CommentEntry[] = [];
+
+  for (const comment of comments) {
+    if (comment.parent && comment.parent !== 'root') {
+      const replies = repliesByParent.get(comment.parent) ?? [];
+      replies.push(comment);
+      repliesByParent.set(comment.parent, replies);
+    } else {
+      topLevel.push(comment);
+    }
+  }
+
+  const lines: string[] = [`# ${title} - コメント (${comments.length}件)`, ''];
+
+  const renderComment = (comment: CommentEntry, indent: string): void => {
+    const likes = comment.like_count ? ` 👍${comment.like_count}` : '';
+    lines.push(`${indent}${comment.author ?? '(不明)'}${likes}`);
+    for (const textLine of (comment.text ?? '').split('\n')) {
+      lines.push(`${indent}${textLine}`);
+    }
+    lines.push('');
+
+    for (const reply of repliesByParent.get(comment.id) ?? []) {
+      renderComment(reply, `${indent}    `);
+    }
+  };
+
+  for (const comment of topLevel) {
+    renderComment(comment, '');
+  }
+
+  return lines.join('\n');
+};
+
 const formatDuration = (seconds: number): string => {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
@@ -110,9 +162,26 @@ const formatDuration = (seconds: number): string => {
   return `${m}:${String(s).padStart(2, '0')}`;
 };
 
-export const downloadVideo = (options: DownloadOptions): Promise<string> => {
+export interface DownloadResult {
+  outputFile: string;
+  descriptionFiles: string[];
+  commentsFiles: string[];
+}
+
+export const downloadVideo = (
+  options: DownloadOptions,
+): Promise<DownloadResult> => {
   return new Promise((resolve, reject) => {
-    const { url, outputDir, quality, audioOnly, hasFfmpeg, playlist } = options;
+    const {
+      url,
+      outputDir,
+      quality,
+      audioOnly,
+      hasFfmpeg,
+      playlist,
+      saveDescription,
+      saveComments,
+    } = options;
     const format = buildFormatSelector(quality, audioOnly, hasFfmpeg);
     const outputTemplate = playlist
       ? path.join(
@@ -139,6 +208,19 @@ export const downloadVideo = (options: DownloadOptions): Promise<string> => {
       args.push('--extract-audio', '--audio-format', 'mp3');
     }
 
+    if (saveDescription) {
+      args.push('--write-description');
+    }
+
+    if (saveComments) {
+      args.push(
+        '--write-info-json',
+        '--write-comments',
+        '--extractor-args',
+        'youtube:max_comments=200;comment_sort=top',
+      );
+    }
+
     args.push(url);
 
     // PYTHONUNBUFFERED=1 でPythonのstdoutバッファリングを無効化し、リアルタイム進捗を受信する
@@ -161,6 +243,8 @@ export const downloadVideo = (options: DownloadOptions): Promise<string> => {
     let stderr = '';
     let currentVideo = 0;
     let totalVideos = 0;
+    const descriptionFiles: string[] = [];
+    const infoJsonFiles: string[] = [];
 
     proc.stdout.on('data', (data: Buffer) => {
       const lines = data.toString().split('\n');
@@ -203,6 +287,21 @@ export const downloadVideo = (options: DownloadOptions): Promise<string> => {
         );
         if (mergedMatch) {
           outputFile = mergedMatch[1].trim();
+        }
+
+        // 概要欄・メタデータJSON（コメント含む）の出力先を捕捉
+        const descFileMatch = line.match(
+          /\[info\] Writing video description to: (.+)/,
+        );
+        if (descFileMatch) {
+          descriptionFiles.push(descFileMatch[1].trim());
+        }
+
+        const infoJsonMatch = line.match(
+          /\[info\] Writing video metadata as JSON to: (.+)/,
+        );
+        if (infoJsonMatch) {
+          infoJsonFiles.push(infoJsonMatch[1].trim());
         }
 
         // HLS: フラグメント進捗をパーセントに変換
@@ -251,7 +350,37 @@ export const downloadVideo = (options: DownloadOptions): Promise<string> => {
         return;
       }
 
-      resolve(outputFile);
+      void (async () => {
+        const commentsFiles: string[] = [];
+
+        if (saveComments) {
+          for (const infoJsonFile of infoJsonFiles) {
+            try {
+              const raw = await readFile(infoJsonFile, 'utf-8');
+              const info = JSON.parse(raw) as {
+                title?: string;
+                comments?: CommentEntry[];
+              };
+              const commentsFile = infoJsonFile.replace(
+                /\.info\.json$/,
+                '.comments.txt',
+              );
+              await writeFile(
+                commentsFile,
+                formatComments(info.title ?? 'Unknown', info.comments ?? []),
+                'utf-8',
+              );
+              commentsFiles.push(commentsFile);
+              // コメント抽出後は生のinfo.jsonを削除（メタデータは.description/.comments.txtで閲覧可能）
+              await unlink(infoJsonFile);
+            } catch {
+              // コメント取得・整形に失敗した場合は info.json をそのまま残す
+            }
+          }
+        }
+
+        resolve({ outputFile, descriptionFiles, commentsFiles });
+      })();
     });
   });
 };
