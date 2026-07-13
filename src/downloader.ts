@@ -150,23 +150,21 @@ const formatComments = (comments: CommentEntry[]): string => {
   return lines.join('\n').trimEnd();
 };
 
-/** 概要欄・コメントを1つの Markdown ファイル用のテキストにまとめる（任意テキストによる Markdown 崩れを避けるためコードブロックに収める） */
-const buildNotesMarkdown = (
+/** 概要欄・コメントを1つの txt ファイル用のテキストにまとめる */
+const buildNotesText = (
   title: string,
   description: string | undefined,
   comments: CommentEntry[] | undefined,
   saveDescription: boolean,
   saveComments: boolean,
 ): string => {
-  const lines: string[] = [`# ${title}`, ''];
+  const lines: string[] = [title, ''];
 
   if (saveDescription) {
     lines.push(
-      '## 概要欄',
+      '■ 概要欄',
       '',
-      '```text',
       (description ?? '').trim() || '(概要欄なし)',
-      '```',
       '',
     );
   }
@@ -174,11 +172,9 @@ const buildNotesMarkdown = (
   if (saveComments) {
     const commentList = comments ?? [];
     lines.push(
-      `## コメント (${commentList.length}件)`,
+      `■ コメント (${commentList.length}件)`,
       '',
-      '```text',
       formatComments(commentList) || '(コメントなし)',
-      '```',
       '',
     );
   }
@@ -415,11 +411,11 @@ export const downloadVideo = (
               };
               const notesFile = infoJsonFile.replace(
                 /\.info\.json$/,
-                '.md',
+                '.txt',
               );
               await writeFile(
                 notesFile,
-                buildNotesMarkdown(
+                buildNotesText(
                   info.title ?? 'Unknown',
                   info.description,
                   info.comments,
@@ -429,7 +425,7 @@ export const downloadVideo = (
                 'utf-8',
               );
               notesFiles.push(notesFile);
-              // 概要欄・コメント抽出後は生のinfo.jsonを削除（メタデータは.mdで閲覧可能）
+              // 概要欄・コメント抽出後は生のinfo.jsonを削除（メタデータは.txtで閲覧可能）
               await unlink(infoJsonFile);
             } catch {
               // 概要欄・コメント取得・整形に失敗した場合は info.json をそのまま残す

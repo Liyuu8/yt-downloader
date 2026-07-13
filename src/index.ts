@@ -104,12 +104,12 @@ const main = async (): Promise<void> => {
     .option('-p, --playlist', 'プレイリスト全体をダウンロード', false)
     .option(
       '-d, --description',
-      '概要欄を Markdown ファイルに含めて取得',
+      '概要欄を txt ファイルに含めて取得',
       false,
     )
     .option(
       '-c, --comments',
-      'コメントを取得し Markdown ファイルに含めて保存',
+      'コメントを取得し txt ファイルに含めて保存',
       false,
     );
 
@@ -230,7 +230,7 @@ const main = async (): Promise<void> => {
 
   if (result.notesFiles.length > 0) {
     console.log(
-      `  ${chalk.white(`${extrasLabel}:`)} ${chalk.cyan(`${result.notesFiles.length} 件の Markdown ファイルを保存`)}`,
+      `  ${chalk.white(`${extrasLabel}:`)} ${chalk.cyan(`${result.notesFiles.length} 件の txt ファイルを保存`)}`,
     );
   }
   console.log('');
