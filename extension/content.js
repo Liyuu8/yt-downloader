@@ -35,7 +35,9 @@ const isAdLink = (href) =>
   href.includes('googleadservices') || href.includes('pagead/aclk');
 
 const extractVideoUrl = (root) => {
-  const links = deepQueryAll(root, 'a[href*="/watch?v="]');
+  const links = root.matches?.('a[href*="/watch?v="]')
+    ? [root, ...deepQueryAll(root, 'a[href*="/watch?v="]')]
+    : deepQueryAll(root, 'a[href*="/watch?v="]');
   for (const link of links) {
     const href = link.href || link.getAttribute('href');
     if (!href || isAdLink(href)) continue;
