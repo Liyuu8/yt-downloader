@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { readFile, writeFile, unlink, rename } from 'fs/promises';
+import { readFile, writeFile, unlink } from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
 import cliProgress from 'cli-progress';
@@ -114,7 +114,7 @@ interface CommentEntry {
 }
 
 /** yt-dlp の info.json 内のコメントをスレッド形式の読みやすいテキストに整形する */
-const formatComments = (title: string, comments: CommentEntry[]): string => {
+const formatComments = (comments: CommentEntry[]): string => {
   const repliesByParent = new Map<string, CommentEntry[]>();
   const topLevel: CommentEntry[] = [];
 
@@ -128,7 +128,7 @@ const formatComments = (title: string, comments: CommentEntry[]): string => {
     }
   }
 
-  const lines: string[] = [`# ${title} - コメント (${comments.length}件)`, ''];
+  const lines: string[] = [];
 
   const renderComment = (comment: CommentEntry, indent: string): void => {
     const likes = comment.like_count ? ` 👍${comment.like_count}` : '';
@@ -147,7 +147,43 @@ const formatComments = (title: string, comments: CommentEntry[]): string => {
     renderComment(comment, '');
   }
 
-  return lines.join('\n');
+  return lines.join('\n').trimEnd();
+};
+
+/** 概要欄・コメントを1つの Markdown ファイル用のテキストにまとめる（任意テキストによる Markdown 崩れを避けるためコードブロックに収める） */
+const buildNotesMarkdown = (
+  title: string,
+  description: string | undefined,
+  comments: CommentEntry[] | undefined,
+  saveDescription: boolean,
+  saveComments: boolean,
+): string => {
+  const lines: string[] = [`# ${title}`, ''];
+
+  if (saveDescription) {
+    lines.push(
+      '## 概要欄',
+      '',
+      '```text',
+      (description ?? '').trim() || '(概要欄なし)',
+      '```',
+      '',
+    );
+  }
+
+  if (saveComments) {
+    const commentList = comments ?? [];
+    lines.push(
+      `## コメント (${commentList.length}件)`,
+      '',
+      '```text',
+      formatComments(commentList) || '(コメントなし)',
+      '```',
+      '',
+    );
+  }
+
+  return lines.join('\n').trimEnd() + '\n';
 };
 
 const formatDuration = (seconds: number): string => {
@@ -164,8 +200,7 @@ const formatDuration = (seconds: number): string => {
 
 export interface DownloadResult {
   outputFile: string;
-  descriptionFiles: string[];
-  commentsFiles: string[];
+  notesFiles: string[];
 }
 
 export const downloadVideo = (
@@ -209,13 +244,12 @@ export const downloadVideo = (
       args.push('--extract-audio', '--audio-format', 'mp3');
     }
 
-    if (saveDescription) {
-      args.push('--write-description');
+    if (saveDescription || saveComments) {
+      args.push('--write-info-json');
     }
 
     if (saveComments) {
       args.push(
-        '--write-info-json',
         '--write-comments',
         '--extractor-args',
         'youtube:max_comments=200;comment_sort=top',
@@ -246,7 +280,6 @@ export const downloadVideo = (
     let stderr = '';
     let currentVideo = 0;
     let totalVideos = 0;
-    const descriptionFiles: string[] = [];
     const infoJsonFiles: string[] = [];
 
     const reportProgress = (percent: number, title?: string): void => {
@@ -306,14 +339,7 @@ export const downloadVideo = (
           outputFile = mergedMatch[1].trim();
         }
 
-        // 概要欄・メタデータJSON（コメント含む）の出力先を捕捉
-        const descFileMatch = line.match(
-          /\[info\] Writing video description to: (.+)/,
-        );
-        if (descFileMatch) {
-          descriptionFiles.push(descFileMatch[1].trim());
-        }
-
+        // メタデータJSON（概要欄・コメント含む）の出力先を捕捉
         const infoJsonMatch = line.match(
           /\[info\] Writing video metadata as JSON to: (.+)/,
         );
@@ -376,50 +402,44 @@ export const downloadVideo = (
       }
 
       void (async () => {
-        // .description のままだとダブルクリックで開けるアプリが認識されないため .txt を付与する
-        const renamedDescriptionFiles: string[] = [];
-        for (const descFile of descriptionFiles) {
-          try {
-            const renamed = `${descFile}.txt`;
-            await rename(descFile, renamed);
-            renamedDescriptionFiles.push(renamed);
-          } catch {
-            renamedDescriptionFiles.push(descFile);
-          }
-        }
+        const notesFiles: string[] = [];
 
-        const commentsFiles: string[] = [];
-
-        if (saveComments) {
+        if (saveDescription || saveComments) {
           for (const infoJsonFile of infoJsonFiles) {
             try {
               const raw = await readFile(infoJsonFile, 'utf-8');
               const info = JSON.parse(raw) as {
                 title?: string;
+                description?: string;
                 comments?: CommentEntry[];
               };
-              const commentsFile = infoJsonFile.replace(
+              const notesFile = infoJsonFile.replace(
                 /\.info\.json$/,
-                '.comments.txt',
+                '.md',
               );
               await writeFile(
-                commentsFile,
-                formatComments(info.title ?? 'Unknown', info.comments ?? []),
+                notesFile,
+                buildNotesMarkdown(
+                  info.title ?? 'Unknown',
+                  info.description,
+                  info.comments,
+                  saveDescription,
+                  saveComments,
+                ),
                 'utf-8',
               );
-              commentsFiles.push(commentsFile);
-              // コメント抽出後は生のinfo.jsonを削除（メタデータは.description/.comments.txtで閲覧可能）
+              notesFiles.push(notesFile);
+              // 概要欄・コメント抽出後は生のinfo.jsonを削除（メタデータは.mdで閲覧可能）
               await unlink(infoJsonFile);
             } catch {
-              // コメント取得・整形に失敗した場合は info.json をそのまま残す
+              // 概要欄・コメント取得・整形に失敗した場合は info.json をそのまま残す
             }
           }
         }
 
         resolve({
           outputFile,
-          descriptionFiles: renamedDescriptionFiles,
-          commentsFiles,
+          notesFiles,
         });
       })();
     });

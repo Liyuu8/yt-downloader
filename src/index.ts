@@ -104,12 +104,12 @@ const main = async (): Promise<void> => {
     .option('-p, --playlist', 'プレイリスト全体をダウンロード', false)
     .option(
       '-d, --description',
-      '概要欄を .description ファイルとして取得',
+      '概要欄を Markdown ファイルに含めて取得',
       false,
     )
     .option(
       '-c, --comments',
-      'コメントを取得し .comments.txt として保存',
+      'コメントを取得し Markdown ファイルに含めて保存',
       false,
     );
 
@@ -228,14 +228,9 @@ const main = async (): Promise<void> => {
   ${chalk.bold.green('✅ ダウンロード完了！')}
   ${chalk.white('保存先:')} ${chalk.cyan(playlist ? outputDir : result.outputFile || outputDir)}`);
 
-  if (result.descriptionFiles.length > 0) {
+  if (result.notesFiles.length > 0) {
     console.log(
-      `  ${chalk.white('概要欄:')} ${chalk.cyan(`${result.descriptionFiles.length} 件の .description.txt ファイルを保存`)}`,
-    );
-  }
-  if (result.commentsFiles.length > 0) {
-    console.log(
-      `  ${chalk.white('コメント:')} ${chalk.cyan(`${result.commentsFiles.length} 件の .comments.txt ファイルを保存`)}`,
+      `  ${chalk.white(`${extrasLabel}:`)} ${chalk.cyan(`${result.notesFiles.length} 件の Markdown ファイルを保存`)}`,
     );
   }
   console.log('');
