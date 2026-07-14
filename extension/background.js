@@ -70,6 +70,10 @@ const pollJob = async (serverUrl, jobId, tabId, buttonId) => {
         });
         activePolls.delete(pollKey);
         return;
+      } else if (job.status === 'cancelled') {
+        notifyTab(tabId, { type: 'JOB_CANCELLED', buttonId });
+        activePolls.delete(pollKey);
+        return;
       }
     } catch {
       // retry
@@ -121,6 +125,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({
           ok: false,
           error: 'ローカルサーバーに接続できません。npm run server を起動してください。',
+        });
+      }
+    })();
+
+    return true;
+  }
+
+  if (message.type === 'CANCEL') {
+    (async () => {
+      const settings = await getSettings();
+      const serverUrl = settings.serverUrl.replace(/\/$/, '');
+      const pollKey = `${sender.tab?.id}:${message.buttonId}`;
+      const jobId = activePolls.get(pollKey);
+
+      if (!jobId) {
+        sendResponse({ ok: false, error: 'ジョブが見つかりません' });
+        return;
+      }
+
+      try {
+        const res = await fetch(`${serverUrl}/cancel/${jobId}`, {
+          method: 'POST',
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          sendResponse({ ok: false, error: data.error ?? 'キャンセルに失敗しました' });
+          return;
+        }
+
+        activePolls.delete(pollKey);
+        sendResponse({ ok: true });
+      } catch {
+        sendResponse({
+          ok: false,
+          error: 'ローカルサーバーに接続できません。',
         });
       }
     })();

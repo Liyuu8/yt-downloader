@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { readFile, writeFile, unlink } from 'fs/promises';
+import { readFile, writeFile, unlink, readdir } from 'fs/promises';
 import path from 'path';
 import chalk from 'chalk';
 import cliProgress from 'cli-progress';
@@ -199,6 +199,13 @@ export interface DownloadResult {
   notesFiles: string[];
 }
 
+export class DownloadCancelledError extends Error {
+  constructor() {
+    super('ダウンロードがキャンセルされました');
+    this.name = 'DownloadCancelledError';
+  }
+}
+
 export const downloadVideo = (
   options: DownloadOptions,
 ): Promise<DownloadResult> => {
@@ -213,7 +220,14 @@ export const downloadVideo = (
       saveDescription,
       saveComments,
       onProgress,
+      signal,
     } = options;
+
+    if (signal?.aborted) {
+      reject(new DownloadCancelledError());
+
+      return;
+    }
     const format = buildFormatSelector(quality, audioOnly, hasFfmpeg);
     const outputTemplate = playlist
       ? path.join(
@@ -258,6 +272,13 @@ export const downloadVideo = (
       env: { ...process.env, PYTHONUNBUFFERED: '1' },
     });
 
+    let cancelled = false;
+    const onAbort = (): void => {
+      cancelled = true;
+      proc.kill('SIGTERM');
+    };
+    signal?.addEventListener('abort', onAbort);
+
     const useCliProgress = !onProgress;
     const progressBar = useCliProgress
       ? new cliProgress.SingleBar(
@@ -277,6 +298,7 @@ export const downloadVideo = (
     let currentVideo = 0;
     let totalVideos = 0;
     const infoJsonFiles: string[] = [];
+    const downloadTargets = new Set<string>();
 
     const reportProgress = (percent: number, title?: string): void => {
       if (onProgress) {
@@ -315,6 +337,7 @@ export const downloadVideo = (
         );
         if (destMatch) {
           outputFile = destMatch[1].trim();
+          downloadTargets.add(outputFile);
           const title = path
             .basename(outputFile, path.extname(outputFile))
             .replace(/^\d+ - /, '');
@@ -333,6 +356,7 @@ export const downloadVideo = (
         );
         if (mergedMatch) {
           outputFile = mergedMatch[1].trim();
+          downloadTargets.add(outputFile);
         }
 
         // メタデータJSON（概要欄・コメント含む）の出力先を捕捉
@@ -385,10 +409,52 @@ export const downloadVideo = (
       stderr += data.toString();
     });
 
+    /** キャンセル時、途中まで書き出された動画・info.json 等をディレクトリごとに掃除する */
+    const cleanupPartialFiles = async (): Promise<void> => {
+      const dirs = new Set<string>();
+      const bases = new Set<string>();
+      for (const target of [...downloadTargets, ...infoJsonFiles]) {
+        dirs.add(path.dirname(target));
+        bases.add(path.basename(target));
+      }
+
+      for (const dir of dirs) {
+        let entries: string[];
+        try {
+          entries = await readdir(dir);
+        } catch {
+          continue;
+        }
+
+        for (const entry of entries) {
+          const isMatch = [...bases].some(
+            (base) => entry === base || entry.startsWith(`${base}.`),
+          );
+          if (!isMatch) continue;
+
+          try {
+            await unlink(path.join(dir, entry));
+          } catch {
+            // 既に存在しない場合は無視
+          }
+        }
+      }
+    };
+
     proc.on('close', (code) => {
+      signal?.removeEventListener('abort', onAbort);
+
       if (progressStarted && progressBar) {
         progressBar.update(100);
         progressBar.stop();
+      }
+
+      if (cancelled) {
+        void cleanupPartialFiles().finally(() => {
+          reject(new DownloadCancelledError());
+        });
+
+        return;
       }
 
       if (code !== 0) {

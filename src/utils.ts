@@ -21,6 +21,7 @@ export interface DownloadOptions {
   saveDescription: boolean;
   saveComments: boolean;
   onProgress?: (progress: DownloadProgress) => void;
+  signal?: AbortSignal;
 }
 
 export const isValidYouTubeUrl = (url: string): boolean => {

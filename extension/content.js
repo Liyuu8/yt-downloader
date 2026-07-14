@@ -90,8 +90,8 @@ const setButtonState = (btn, state, progress) => {
   if (state === 'loading') {
     btn.classList.add('yt-dl-loading');
     btn.title = progress
-      ? `ダウンロード中 ${Math.round(progress)}%`
-      : 'ダウンロード中...';
+      ? `ダウンロード中 ${Math.round(progress)}%（クリックでキャンセル）`
+      : 'ダウンロード中...（クリックでキャンセル）';
     btn.innerHTML = `<span class="yt-dl-icon">${progress ? Math.round(progress) + '%' : '…'}</span>`;
   } else if (state === 'done') {
     btn.classList.add('yt-dl-done');
@@ -137,6 +137,20 @@ const startDownload = (btn, videoUrl, title) => {
   );
 };
 
+const cancelDownload = (btn) => {
+  chrome.runtime.sendMessage(
+    { type: 'CANCEL', buttonId: btn.dataset.buttonId },
+    (response) => {
+      if (chrome.runtime.lastError || !response?.ok) {
+        showToast(response?.error ?? 'キャンセルに失敗しました');
+        return;
+      }
+      setButtonState(btn, 'idle');
+      showToast('キャンセルしました');
+    },
+  );
+};
+
 const attachButton = (root, videoUrl, title) => {
   if (root.hasAttribute(PROCESSED_ATTR)) return;
 
@@ -157,7 +171,10 @@ const attachButton = (root, videoUrl, title) => {
   btn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (btn.dataset.state === 'loading') return;
+    if (btn.dataset.state === 'loading') {
+      cancelDownload(btn);
+      return;
+    }
     setButtonState(btn, 'idle');
     startDownload(btn, videoUrl, title);
   });
@@ -214,6 +231,8 @@ chrome.runtime.onMessage.addListener((message) => {
   } else if (message.type === 'JOB_ERROR') {
     setButtonState(btn, 'error');
     showToast(message.error ?? 'ダウンロード失敗');
+  } else if (message.type === 'JOB_CANCELLED') {
+    setButtonState(btn, 'idle');
   }
 });
 

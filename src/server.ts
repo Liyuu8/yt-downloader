@@ -2,7 +2,11 @@ import http from 'http';
 import os from 'os';
 import path from 'path';
 import { randomUUID } from 'crypto';
-import { downloadVideo, fetchVideoInfo } from './downloader.js';
+import {
+  DownloadCancelledError,
+  downloadVideo,
+  fetchVideoInfo,
+} from './downloader.js';
 import {
   checkFfmpeg,
   checkYtDlp,
@@ -15,7 +19,12 @@ import {
 const DEFAULT_PORT = 8765;
 const DEFAULT_OUTPUT_DIR = path.join(os.homedir(), 'Downloads', 'downloads');
 
-type JobStatus = 'queued' | 'downloading' | 'completed' | 'failed';
+type JobStatus =
+  | 'queued'
+  | 'downloading'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
 
 interface Job {
   id: string;
@@ -30,6 +39,7 @@ interface Job {
   audioOnly: boolean;
   saveDescription: boolean;
   saveComments: boolean;
+  abortController: AbortController;
 }
 
 const jobs = new Map<string, Job>();
@@ -99,6 +109,14 @@ const processQueue = async (): Promise<void> => {
     return;
   }
 
+  if (job.abortController.signal.aborted) {
+    job.status = 'cancelled';
+    isProcessing = false;
+    await processQueue();
+
+    return;
+  }
+
   job.status = 'downloading';
 
   try {
@@ -114,6 +132,7 @@ const processQueue = async (): Promise<void> => {
       playlist: false,
       saveDescription: job.saveDescription,
       saveComments: job.saveComments,
+      signal: job.abortController.signal,
       onProgress: (progress) => {
         job.progress = progress.percent;
         if (progress.title) {
@@ -126,8 +145,12 @@ const processQueue = async (): Promise<void> => {
     job.progress = 100;
     job.outputFile = result.outputFile;
   } catch (err) {
-    job.status = 'failed';
-    job.error = (err as Error).message;
+    if (err instanceof DownloadCancelledError) {
+      job.status = 'cancelled';
+    } else {
+      job.status = 'failed';
+      job.error = (err as Error).message;
+    }
   }
 
   isProcessing = false;
@@ -151,6 +174,7 @@ const createJob = (
     audioOnly,
     saveDescription,
     saveComments,
+    abortController: new AbortController(),
   };
   jobs.set(job.id, job);
   jobQueue.push(job.id);
@@ -203,6 +227,38 @@ const server = http.createServer(async (req, res) => {
 
       return;
     }
+    respond(200, toPublicJob(job));
+
+    return;
+  }
+
+  const cancelMatch = url.pathname.match(/^\/cancel\/(.+)$/);
+  if (req.method === 'POST' && cancelMatch) {
+    const job = jobs.get(cancelMatch[1]);
+    if (!job) {
+      respond(404, { error: 'ジョブが見つかりません' });
+
+      return;
+    }
+
+    if (
+      job.status === 'completed' ||
+      job.status === 'failed' ||
+      job.status === 'cancelled'
+    ) {
+      respond(400, { error: 'このジョブは既に終了しています' });
+
+      return;
+    }
+
+    if (job.status === 'queued') {
+      const idx = jobQueue.indexOf(job.id);
+      if (idx !== -1) jobQueue.splice(idx, 1);
+      job.status = 'cancelled';
+    } else {
+      job.abortController.abort();
+    }
+
     respond(200, toPublicJob(job));
 
     return;
