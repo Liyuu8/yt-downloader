@@ -148,6 +148,8 @@ npm run server
 
 サーバーは `http://127.0.0.1:8765` で待ち受け（Docker の場合もホストのループバックにのみ公開）、ダウンロード先は `~/Downloads/downloads/` です。
 
+`./yt-dl-server.sh` はコンテナをバックグラウンドで起動し（`--restart unless-stopped`）、再起動時にも自動的に立ち上がります。停止する場合は `docker stop yt-downloader-server`、ログを見る場合は `docker logs -f yt-downloader-server` を使ってください。
+
 **2. Chrome 拡張機能を読み込む**
 
 1. Chrome で `chrome://extensions` を開く
