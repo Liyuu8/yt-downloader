@@ -114,7 +114,7 @@ interface CommentEntry {
 }
 
 /** yt-dlp の info.json 内のコメントをスレッド形式の読みやすいテキストに整形する */
-const formatComments = (comments: CommentEntry[]): string => {
+export const formatComments = (comments: CommentEntry[]): string => {
   const repliesByParent = new Map<string, CommentEntry[]>();
   const topLevel: CommentEntry[] = [];
 
@@ -151,7 +151,7 @@ const formatComments = (comments: CommentEntry[]): string => {
 };
 
 /** 概要欄・コメントを1つの txt ファイル用のテキストにまとめる */
-const buildNotesText = (
+export const buildNotesText = (
   title: string,
   description: string | undefined,
   comments: CommentEntry[] | undefined,
@@ -182,7 +182,7 @@ const buildNotesText = (
   return lines.join('\n').trimEnd() + '\n';
 };
 
-const formatDuration = (seconds: number): string => {
+export const formatDuration = (seconds: number): string => {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);
@@ -475,10 +475,7 @@ export const downloadVideo = (
                 description?: string;
                 comments?: CommentEntry[];
               };
-              const notesFile = infoJsonFile.replace(
-                /\.info\.json$/,
-                '.txt',
-              );
+              const notesFile = infoJsonFile.replace(/\.info\.json$/, '.txt');
               await writeFile(
                 notesFile,
                 buildNotesText(

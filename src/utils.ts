@@ -39,6 +39,22 @@ export const isValidYouTubeUrl = (url: string): boolean => {
 export const isPlaylistUrl = (url: string): boolean =>
   /youtube\.com\/playlist\?/.test(url);
 
+export const formatFileSize = (bytes?: number): string => {
+  if (!bytes) return '不明';
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1024) {
+    return `${(mb / 1024).toFixed(1)} GB`;
+  }
+
+  return `${mb.toFixed(1)} MB`;
+};
+
+// 拡張機能(chrome-extension://)以外のオリジンからの CORS を許可すると、
+// このローカルサーバー起動中に開いた任意の Web ページから /download を
+// 叩かれてダウンロードを勝手に開始されてしまうため、Origin を検証する
+export const isAllowedOrigin = (origin: string | undefined): boolean =>
+  origin != null && origin.startsWith('chrome-extension://');
+
 export const ensureOutputDir = (dir: string): void => {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
