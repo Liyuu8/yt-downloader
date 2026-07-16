@@ -13,6 +13,7 @@ import {
   checkFfmpeg,
   checkYtDlp,
   ensureOutputDir,
+  formatFileSize,
   getYtDlpVersion,
   isPlaylistUrl,
   isValidYouTubeUrl,
@@ -30,16 +31,6 @@ const printBanner = (): void => {
   ╚═══════════════════════════════╝
 `),
   );
-};
-
-const formatFileSize = (bytes?: number): string => {
-  if (!bytes) return '不明';
-  const mb = bytes / (1024 * 1024);
-  if (mb >= 1024) {
-    return `${(mb / 1024).toFixed(1)} GB`;
-  }
-
-  return `${mb.toFixed(1)} MB`;
 };
 
 const main = async (): Promise<void> => {
@@ -102,11 +93,7 @@ const main = async (): Promise<void> => {
     )
     .option('-a, --audio-only', '音声のみを MP3 としてダウンロード', false)
     .option('-p, --playlist', 'プレイリスト全体をダウンロード', false)
-    .option(
-      '-d, --description',
-      '概要欄を txt ファイルに含めて取得',
-      false,
-    )
+    .option('-d, --description', '概要欄を txt ファイルに含めて取得', false)
     .option(
       '-c, --comments',
       'コメントを取得し txt ファイルに含めて保存',

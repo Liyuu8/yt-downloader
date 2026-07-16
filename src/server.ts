@@ -12,6 +12,7 @@ import {
   checkYtDlp,
   ensureOutputDir,
   getYtDlpVersion,
+  isAllowedOrigin,
   isValidYouTubeUrl,
   type Quality,
 } from './utils.js';
@@ -49,12 +50,6 @@ let isProcessing = false;
 const hasFfmpeg = checkFfmpeg();
 const outputDir = process.env.YT_DL_OUTPUT ?? DEFAULT_OUTPUT_DIR;
 ensureOutputDir(outputDir);
-
-// 拡張機能(chrome-extension://)以外のオリジンからの CORS を許可すると、
-// このローカルサーバー起動中に開いた任意の Web ページから /download を
-// 叩かれてダウンロードを勝手に開始されてしまうため、Origin を検証する
-const isAllowedOrigin = (origin: string | undefined): boolean =>
-  origin != null && origin.startsWith('chrome-extension://');
 
 const sendJson = (
   res: http.ServerResponse,
@@ -273,7 +268,9 @@ const server = http.createServer(async (req, res) => {
 
     const contentType = req.headers['content-type'] ?? '';
     if (!contentType.toLowerCase().startsWith('application/json')) {
-      respond(400, { error: 'Content-Type は application/json である必要があります' });
+      respond(400, {
+        error: 'Content-Type は application/json である必要があります',
+      });
 
       return;
     }
