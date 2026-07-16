@@ -194,6 +194,69 @@ export const formatDuration = (seconds: number): string => {
   return `${m}:${String(s).padStart(2, '0')}`;
 };
 
+export type YtDlpLineEvent =
+  | { type: 'videoSwitch'; currentVideo: number; totalVideos: number }
+  | { type: 'destination'; file: string }
+  | { type: 'merged'; file: string }
+  | { type: 'infoJson'; file: string }
+  | { type: 'progress'; percent: number };
+
+/** yt-dlp の標準出力1行を解析し、検出したイベントを返す（副作用なし） */
+export const parseYtDlpLine = (line: string): YtDlpLineEvent[] => {
+  const events: YtDlpLineEvent[] = [];
+
+  // プレイリスト: 動画切り替え検出
+  const videoMatch = line.match(
+    /\[download\] Downloading video (\d+) of (\d+)/,
+  );
+  if (videoMatch) {
+    events.push({
+      type: 'videoSwitch',
+      currentVideo: parseInt(videoMatch[1], 10),
+      totalVideos: parseInt(videoMatch[2], 10),
+    });
+  }
+
+  // 出力ファイルパスを捕捉
+  const destMatch = line.match(
+    /\[(?:download|Merger|ExtractAudio)\] Destination: (.+)/,
+  );
+  if (destMatch) {
+    events.push({ type: 'destination', file: destMatch[1].trim() });
+  }
+
+  const mergedMatch = line.match(/\[Merger\] Merging formats into "(.+)"/);
+  if (mergedMatch) {
+    events.push({ type: 'merged', file: mergedMatch[1].trim() });
+  }
+
+  // メタデータJSON（概要欄・コメント含む）の出力先を捕捉
+  const infoJsonMatch = line.match(
+    /\[info\] Writing video metadata as JSON to: (.+)/,
+  );
+  if (infoJsonMatch) {
+    events.push({ type: 'infoJson', file: infoJsonMatch[1].trim() });
+  }
+
+  // HLS: フラグメント進捗をパーセントに変換
+  const itemMatch = line.match(/\[download\] Downloading item (\d+) of (\d+)/);
+  if (itemMatch) {
+    const current = parseInt(itemMatch[1], 10);
+    const total = parseInt(itemMatch[2], 10);
+    if (total > 0) {
+      events.push({ type: 'progress', percent: (current / total) * 100 });
+    }
+  }
+
+  // 通常ダウンロード: [download]  xx.x% of ...
+  const progressMatch = line.match(/\[download\]\s+([\d.]+)%/);
+  if (progressMatch) {
+    events.push({ type: 'progress', percent: parseFloat(progressMatch[1]) });
+  }
+
+  return events;
+};
+
 export interface DownloadResult {
   outputFile: string;
   notesFiles: string[];
@@ -311,95 +374,65 @@ export const downloadVideo = (
       }
     };
 
+    const handleProgressPercent = (percent: number): void => {
+      if (useCliProgress && progressBar) {
+        if (!progressStarted) {
+          progressBar.start(100, 0);
+          progressStarted = true;
+        }
+        progressBar.update(percent);
+      } else {
+        reportProgress(percent);
+      }
+    };
+
     proc.stdout.on('data', (data: Buffer) => {
       const lines = data.toString().split('\n');
       for (const rawLine of lines) {
         const line = rawLine.trim();
         if (!line) continue;
 
-        // プレイリスト: 動画切り替え検出
-        const videoMatch = line.match(
-          /\[download\] Downloading video (\d+) of (\d+)/,
-        );
-        if (videoMatch) {
-          if (progressStarted && progressBar) {
-            progressBar.update(100);
-            progressBar.stop();
-            progressStarted = false;
-          }
-          currentVideo = parseInt(videoMatch[1], 10);
-          totalVideos = parseInt(videoMatch[2], 10);
-        }
-
-        // 出力ファイルパスを捕捉（プレイリスト時はタイトルも表示）
-        const destMatch = line.match(
-          /\[(?:download|Merger|ExtractAudio)\] Destination: (.+)/,
-        );
-        if (destMatch) {
-          outputFile = destMatch[1].trim();
-          downloadTargets.add(outputFile);
-          const title = path
-            .basename(outputFile, path.extname(outputFile))
-            .replace(/^\d+ - /, '');
-          if (totalVideos > 0) {
-            if (useCliProgress) {
-              process.stdout.write(
-                `\n  [${currentVideo}/${totalVideos}] ${chalk.yellow(title)}\n`,
-              );
-            }
-            reportProgress(0, title);
-          }
-        }
-
-        const mergedMatch = line.match(
-          /\[Merger\] Merging formats into "(.+)"/,
-        );
-        if (mergedMatch) {
-          outputFile = mergedMatch[1].trim();
-          downloadTargets.add(outputFile);
-        }
-
-        // メタデータJSON（概要欄・コメント含む）の出力先を捕捉
-        const infoJsonMatch = line.match(
-          /\[info\] Writing video metadata as JSON to: (.+)/,
-        );
-        if (infoJsonMatch) {
-          infoJsonFiles.push(infoJsonMatch[1].trim());
-        }
-
-        // HLS: フラグメント進捗をパーセントに変換
-        const itemMatch = line.match(
-          /\[download\] Downloading item (\d+) of (\d+)/,
-        );
-        if (itemMatch) {
-          const current = parseInt(itemMatch[1], 10);
-          const total = parseInt(itemMatch[2], 10);
-          if (total > 0) {
-            const percent = (current / total) * 100;
-            if (useCliProgress && progressBar) {
-              if (!progressStarted) {
-                progressBar.start(100, 0);
-                progressStarted = true;
+        for (const event of parseYtDlpLine(line)) {
+          switch (event.type) {
+            case 'videoSwitch':
+              if (progressStarted && progressBar) {
+                progressBar.update(100);
+                progressBar.stop();
+                progressStarted = false;
               }
-              progressBar.update(percent);
-            } else {
-              reportProgress(percent);
-            }
-          }
-        }
+              currentVideo = event.currentVideo;
+              totalVideos = event.totalVideos;
+              break;
 
-        // 通常ダウンロード: [download]  xx.x% of ...
-        const progressMatch = line.match(/\[download\]\s+([\d.]+)%/);
-        if (progressMatch) {
-          const percent = parseFloat(progressMatch[1]);
-          if (useCliProgress && progressBar) {
-            if (!progressStarted) {
-              progressBar.start(100, 0);
-              progressStarted = true;
+            case 'destination': {
+              outputFile = event.file;
+              downloadTargets.add(outputFile);
+              const title = path
+                .basename(outputFile, path.extname(outputFile))
+                .replace(/^\d+ - /, '');
+              if (totalVideos > 0) {
+                if (useCliProgress) {
+                  process.stdout.write(
+                    `\n  [${currentVideo}/${totalVideos}] ${chalk.yellow(title)}\n`,
+                  );
+                }
+                reportProgress(0, title);
+              }
+              break;
             }
-            progressBar.update(percent);
-          } else {
-            reportProgress(percent);
+
+            case 'merged':
+              outputFile = event.file;
+              downloadTargets.add(outputFile);
+              break;
+
+            case 'infoJson':
+              infoJsonFiles.push(event.file);
+              break;
+
+            case 'progress':
+              handleProgressPercent(event.percent);
+              break;
           }
         }
       }

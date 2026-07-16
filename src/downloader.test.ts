@@ -4,7 +4,60 @@ import {
   formatDuration,
   formatComments,
   buildNotesText,
+  parseYtDlpLine,
 } from './downloader.js';
+
+describe('parseYtDlpLine', () => {
+  it('returns no events for an unrecognized line', () => {
+    expect(parseYtDlpLine('[youtube] Extracting URL')).toEqual([]);
+  });
+
+  it('detects a playlist video switch', () => {
+    expect(parseYtDlpLine('[download] Downloading video 2 of 5')).toEqual([
+      { type: 'videoSwitch', currentVideo: 2, totalVideos: 5 },
+    ]);
+  });
+
+  it.each([
+    '[download] Destination: /out/My Video.mp4',
+    '[Merger] Destination: /out/My Video.mp4',
+    '[ExtractAudio] Destination: /out/My Video.mp4',
+  ])('detects a destination line: %s', (line) => {
+    expect(parseYtDlpLine(line)).toEqual([
+      { type: 'destination', file: '/out/My Video.mp4' },
+    ]);
+  });
+
+  it('detects a merged-formats line', () => {
+    expect(
+      parseYtDlpLine('[Merger] Merging formats into "/out/My Video.mp4"'),
+    ).toEqual([{ type: 'merged', file: '/out/My Video.mp4' }]);
+  });
+
+  it('detects an info.json write line', () => {
+    expect(
+      parseYtDlpLine(
+        '[info] Writing video metadata as JSON to: /out/My Video.info.json',
+      ),
+    ).toEqual([{ type: 'infoJson', file: '/out/My Video.info.json' }]);
+  });
+
+  it('converts an HLS item count into a progress percentage', () => {
+    expect(parseYtDlpLine('[download] Downloading item 1 of 4')).toEqual([
+      { type: 'progress', percent: 25 },
+    ]);
+  });
+
+  it('emits no progress event when the HLS item total is zero', () => {
+    expect(parseYtDlpLine('[download] Downloading item 0 of 0')).toEqual([]);
+  });
+
+  it('parses a plain download percentage', () => {
+    expect(
+      parseYtDlpLine('[download]  42.5% of 10.00MiB at 1.00MiB/s'),
+    ).toEqual([{ type: 'progress', percent: 42.5 }]);
+  });
+});
 
 describe('formatDuration', () => {
   it('formats 0 seconds', () => {
