@@ -119,13 +119,24 @@ const showToast = (message) => {
   }, 4000);
 };
 
+// 拡張機能が更新/再読み込みされると、既に開いていたタブの content script は無効化された
+// 古いコンテキストのまま残り、chrome.runtime.sendMessage が同期的に例外を投げるようになる。
+// このタブ側では復旧できないため、握りつぶして再読み込みを促すに留める
+const safeSendMessage = (message, callback) => {
+  try {
+    chrome.runtime.sendMessage(message, callback);
+  } catch {
+    callback({ ok: false, error: '拡張機能が更新されました。ページを再読み込みしてください。' });
+  }
+};
+
 const startDownload = (item, videoUrl, title) => {
   const buttonId = crypto.randomUUID();
   buttonIdToUrl.set(buttonId, videoUrl);
   jobs.set(videoUrl, { buttonId, state: 'loading', title, item });
   renderMenuItemState(item, 'loading');
 
-  chrome.runtime.sendMessage(
+  safeSendMessage(
     { type: 'DOWNLOAD', url: videoUrl, title, buttonId },
     (response) => {
       if (chrome.runtime.lastError || !response?.ok) {
@@ -142,7 +153,7 @@ const cancelDownload = (item, videoUrl) => {
   const job = jobs.get(videoUrl);
   if (!job) return;
 
-  chrome.runtime.sendMessage(
+  safeSendMessage(
     { type: 'CANCEL', buttonId: job.buttonId },
     (response) => {
       if (chrome.runtime.lastError || !response?.ok) {

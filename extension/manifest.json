@@ -3,7 +3,7 @@
   "name": "yt-downloader",
   "version": "0.1.0",
   "description": "YouTube フィード上の動画を yt-dlp でダウンロード",
-  "permissions": ["storage", "notifications"],
+  "permissions": ["storage", "notifications", "alarms"],
   "host_permissions": [
     "https://www.youtube.com/*",
     "http://127.0.0.1:8765/*",

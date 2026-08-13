@@ -179,8 +179,12 @@ const resumeIncompleteDownloads = async () => {
 
   const settings = await getSettings();
   const serverUrl = settings.serverUrl.replace(/\/$/, '');
+  const alreadyPolling = new Set(activePolls.values());
 
   for (const d of incomplete) {
+    // このアラーム発火時点で既にポーリング中のジョブは二重起動しない
+    if (alreadyPolling.has(d.jobId)) continue;
+
     // 今回の修正より前に作られた履歴には buttonId が保存されていないことがあるため、
     // ポーリング管理用の一意キーとして必要なだけの buttonId をその場で補う
     const buttonId = d.buttonId ?? crypto.randomUUID();
@@ -188,6 +192,19 @@ const resumeIncompleteDownloads = async () => {
     void pollJob(serverUrl, d.jobId, d.tabId, buttonId, d.url, d.title, { resume: true });
   }
 };
+
+// MV3 の service worker は setTimeout によるポーリングループの途中でも約30秒操作がないと
+// 強制終了されるため、resumeIncompleteDownloads を起動時に一度呼ぶだけでは、ユーザーが
+// ポップアップを開くなど拡張機能を操作しない限り二度と再開されず「ダウンロード中」のまま
+// 固まって見える。chrome.alarms は service worker 終了後も確実に発火するため、これで
+// 定期的に service worker を起こして未完了ジョブのポーリングを再開させる
+const RESUME_POLL_ALARM = 'yt-dl-resume-poll';
+chrome.alarms.create(RESUME_POLL_ALARM, { periodInMinutes: 1 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === RESUME_POLL_ALARM) {
+    void resumeIncompleteDownloads();
+  }
+});
 
 void resumeIncompleteDownloads();
 
