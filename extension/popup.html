@@ -9,12 +9,37 @@
         margin: 0;
         padding: 0;
       }
+      /*
+       * 設定の開閉で内側のコンテンツの高さが変わると、Chrome のポップアップ自動サイズ判定が
+       * 反応して window 自体の縦横が変わってしまう。html と body の両方を完全に固定サイズにし、
+       * スクロールは #content 側だけで起こすことで、window 側は常に同じ大きさに見せる。
+       * また overflow のある要素に直接 padding を付けると、一番下までスクロールした際に
+       * その padding 分の余白が無視される(ブラウザ共通の既知の挙動)ため、padding はスクロール
+       * コンテナ(#content)ではなく、その内側の子要素に持たせる。
+       */
+      html,
       body {
         width: 300px;
-        padding: 16px;
+        min-width: 300px;
+        max-width: 300px;
+        height: 560px;
+        min-height: 560px;
+        max-height: 560px;
+        overflow: hidden;
+      }
+      body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         font-size: 13px;
         color: #1a1a1a;
+      }
+      #content {
+        width: 100%;
+        height: 100%;
+        overflow-y: auto;
+        overflow-x: hidden;
+      }
+      #content-inner {
+        padding: 16px;
       }
       h1 {
         font-size: 15px;
@@ -67,19 +92,58 @@
         background: #e3f2fd;
         color: #1565c0;
       }
-      button {
-        width: 100%;
-        padding: 8px;
-        background: #ff0000;
-        color: #fff;
-        border: none;
+      h2 {
+        font-size: 12px;
+        font-weight: 500;
+        color: #555;
+        margin-bottom: 6px;
+      }
+      .download-list {
+        list-style: none;
+        margin-bottom: 14px;
+        max-height: 140px;
+        overflow-y: auto;
+        border: 1px solid #eee;
         border-radius: 6px;
-        cursor: pointer;
-        font-size: 13px;
+      }
+      .download-list li {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 6px 8px;
+        border-bottom: 1px solid #eee;
+        font-size: 12px;
+      }
+      .download-list li:last-child {
+        border-bottom: none;
+      }
+      .download-list li.empty {
+        color: #999;
+        justify-content: center;
+      }
+      .download-title {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .download-progress {
+        flex: none;
+        color: #1565c0;
         font-weight: 500;
       }
-      button:hover {
-        background: #cc0000;
+      .retry-btn {
+        flex: none;
+        padding: 3px 8px;
+        font-size: 11px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #fff;
+        color: #1a1a1a;
+        cursor: pointer;
+      }
+      .retry-btn:hover {
+        background: #f5f5f5;
       }
       .hint {
         margin-top: 12px;
@@ -87,45 +151,72 @@
         color: #888;
         line-height: 1.5;
       }
+      details {
+        margin-top: 8px;
+      }
+      summary {
+        cursor: pointer;
+        font-size: 12px;
+        color: #555;
+        margin-bottom: 8px;
+      }
     </style>
   </head>
   <body>
-    <h1>yt-downloader</h1>
-    <div id="status" class="loading">サーバー確認中...</div>
+    <div id="content">
+      <div id="content-inner">
+        <h1>yt-downloader</h1>
+        <div id="status" class="loading">サーバー確認中...</div>
 
-    <label for="serverUrl">ローカルサーバー URL</label>
-    <input type="text" id="serverUrl" value="http://127.0.0.1:8765" />
+        <h2>待機中</h2>
+        <ul id="queuedDownloads" class="download-list"></ul>
 
-    <label for="quality">画質</label>
-    <select id="quality">
-      <option value="best">最高画質</option>
-      <option value="1080">1080p</option>
-      <option value="720">720p</option>
-      <option value="480">480p</option>
-      <option value="360">360p</option>
-    </select>
+        <h2>ダウンロード中</h2>
+        <ul id="activeDownloads" class="download-list"></ul>
 
-    <div class="checkbox-row">
-      <input type="checkbox" id="audioOnly" />
-      <label for="audioOnly">音声のみ (MP3)</label>
+        <h2>完了</h2>
+        <ul id="completedDownloads" class="download-list"></ul>
+
+        <h2>失敗</h2>
+        <ul id="failedDownloads" class="download-list"></ul>
+
+        <details>
+          <summary>設定</summary>
+
+          <label for="serverUrl">ローカルサーバー URL</label>
+          <input type="text" id="serverUrl" value="http://127.0.0.1:8765" />
+
+          <label for="quality">画質</label>
+          <select id="quality">
+            <option value="best">最高画質</option>
+            <option value="1080">1080p</option>
+            <option value="720">720p</option>
+            <option value="480">480p</option>
+            <option value="360">360p</option>
+          </select>
+
+          <div class="checkbox-row">
+            <input type="checkbox" id="audioOnly" />
+            <label for="audioOnly">音声のみ (MP3)</label>
+          </div>
+
+          <div class="checkbox-row">
+            <input type="checkbox" id="saveDescription" />
+            <label for="saveDescription">概要欄も保存</label>
+          </div>
+
+          <div class="checkbox-row">
+            <input type="checkbox" id="saveComments" />
+            <label for="saveComments">コメントも保存</label>
+          </div>
+        </details>
+
+        <p class="hint">
+          使い方: ターミナルで <code>npm run server</code> を実行し、YouTube
+          フィードのサムネイルにマウスを乗せるとダウンロードボタンが表示されます。設定は変更すると自動的に保存されます。
+        </p>
+      </div>
     </div>
-
-    <div class="checkbox-row">
-      <input type="checkbox" id="saveDescription" />
-      <label for="saveDescription">概要欄も保存</label>
-    </div>
-
-    <div class="checkbox-row">
-      <input type="checkbox" id="saveComments" />
-      <label for="saveComments">コメントも保存</label>
-    </div>
-
-    <button id="save">設定を保存</button>
-
-    <p class="hint">
-      使い方: ターミナルで <code>npm run server</code> を実行し、YouTube
-      フィードのサムネイルにマウスを乗せるとダウンロードボタンが表示されます。
-    </p>
 
     <script src="popup.js"></script>
   </body>

@@ -17,12 +17,55 @@ const notifyTab = (tabId, message) => {
   chrome.tabs.sendMessage(tabId, message).catch(() => {});
 };
 
+// popup で表示するダウンロード履歴。完了/失敗分が無限に溜まらないよう上限を設ける
+const MAX_STORED_DOWNLOADS = 30;
+
+const upsertDownload = async (record) => {
+  const { downloads = [] } = await chrome.storage.local.get({ downloads: [] });
+  const idx = downloads.findIndex((d) => d.jobId === record.jobId);
+
+  if (idx >= 0) {
+    downloads[idx] = { ...downloads[idx], ...record };
+  } else {
+    downloads.unshift({ ...record });
+  }
+
+  const isActive = (d) => d.status === 'queued' || d.status === 'downloading';
+  const active = downloads.filter(isActive);
+  const finished = downloads.filter((d) => !isActive(d)).slice(0, MAX_STORED_DOWNLOADS);
+
+  await chrome.storage.local.set({ downloads: [...active, ...finished] });
+};
+
+const removeDownload = async (jobId) => {
+  const { downloads = [] } = await chrome.storage.local.get({ downloads: [] });
+
+  await chrome.storage.local.set({ downloads: downloads.filter((d) => d.jobId !== jobId) });
+};
+
 // 4K など大きい動画や低速回線では10分を超えることがあるため、余裕を持った上限にする
 const MAX_POLL_SECONDS = 3600;
 
-const pollJob = async (serverUrl, jobId, tabId, buttonId) => {
+// MV3 の service worker は使われていないと途中で終了させられ、setTimeout によるポーリングの
+// ループもそのまま消えてしまう。サーバー側は完了していても、拡張機能側がそれを二度と確認しに
+// 行かず「ダウンロード中」のまま固まって見える不具合の原因になるため、tabId/buttonId も
+// 保存しておき、service worker が再起動した際に未完了分のポーリングを再開できるようにする
+const pollJob = async (serverUrl, jobId, tabId, buttonId, videoUrl, initialTitle, { resume = false } = {}) => {
   const pollKey = `${tabId}:${buttonId}`;
   activePolls.set(pollKey, jobId);
+
+  if (!resume) {
+    await upsertDownload({
+      jobId,
+      url: videoUrl,
+      title: initialTitle,
+      status: 'queued',
+      progress: 0,
+      tabId,
+      buttonId,
+      updatedAt: Date.now(),
+    });
+  }
 
   for (let i = 0; i < MAX_POLL_SECONDS; i++) {
     if (activePolls.get(pollKey) !== jobId) return;
@@ -31,9 +74,23 @@ const pollJob = async (serverUrl, jobId, tabId, buttonId) => {
 
     try {
       const res = await fetch(`${serverUrl}/status/${jobId}`);
+
+      if (res.status === 404) {
+        // サーバーがこのジョブを認識できない(サーバー再起動でジョブ情報が消えた等)。
+        // 無視して延々リトライすると「ダウンロード中」のまま固まって見えるので、失敗として確定させる
+        const error = 'サーバーがこのジョブを認識できませんでした（サーバーが再起動された可能性があります）';
+
+        notifyTab(tabId, { type: 'JOB_ERROR', buttonId, error });
+        await upsertDownload({ jobId, status: 'failed', error, updatedAt: Date.now() });
+        activePolls.delete(pollKey);
+
+        return;
+      }
+
       if (!res.ok) continue;
 
       const job = await res.json();
+      const title = job.title ?? initialTitle;
 
       if (job.status === 'downloading' || job.status === 'queued') {
         notifyTab(tabId, {
@@ -41,6 +98,13 @@ const pollJob = async (serverUrl, jobId, tabId, buttonId) => {
           buttonId,
           progress: job.progress,
           title: job.title,
+        });
+        await upsertDownload({
+          jobId,
+          title,
+          status: job.status,
+          progress: job.progress,
+          updatedAt: Date.now(),
         });
       } else if (job.status === 'completed') {
         notifyTab(tabId, {
@@ -54,7 +118,15 @@ const pollJob = async (serverUrl, jobId, tabId, buttonId) => {
           title: 'ダウンロード完了',
           message: job.title ?? '動画',
         });
+        await upsertDownload({
+          jobId,
+          title,
+          status: 'completed',
+          progress: 100,
+          updatedAt: Date.now(),
+        });
         activePolls.delete(pollKey);
+
         return;
       } else if (job.status === 'failed') {
         notifyTab(tabId, {
@@ -68,11 +140,21 @@ const pollJob = async (serverUrl, jobId, tabId, buttonId) => {
           title: 'ダウンロード失敗',
           message: job.error ?? '不明なエラー',
         });
+        await upsertDownload({
+          jobId,
+          title,
+          status: 'failed',
+          error: job.error,
+          updatedAt: Date.now(),
+        });
         activePolls.delete(pollKey);
+
         return;
       } else if (job.status === 'cancelled') {
         notifyTab(tabId, { type: 'JOB_CANCELLED', buttonId });
+        await removeDownload(jobId);
         activePolls.delete(pollKey);
+
         return;
       }
     } catch {
@@ -84,6 +166,30 @@ const pollJob = async (serverUrl, jobId, tabId, buttonId) => {
   // （実際は継続中/完了している可能性がある）ため、失敗として通知はしない
   activePolls.delete(pollKey);
 };
+
+// service worker が起動する度に呼ばれる。前回の service worker 終了時にポーリングが
+// 途中で止まってしまった「queued/downloading」のままの履歴があれば、ポーリングを再開する
+const resumeIncompleteDownloads = async () => {
+  const { downloads = [] } = await chrome.storage.local.get({ downloads: [] });
+  const incomplete = downloads.filter(
+    (d) => (d.status === 'queued' || d.status === 'downloading') && d.jobId,
+  );
+
+  if (incomplete.length === 0) return;
+
+  const settings = await getSettings();
+  const serverUrl = settings.serverUrl.replace(/\/$/, '');
+
+  for (const d of incomplete) {
+    // 今回の修正より前に作られた履歴には buttonId が保存されていないことがあるため、
+    // ポーリング管理用の一意キーとして必要なだけの buttonId をその場で補う
+    const buttonId = d.buttonId ?? crypto.randomUUID();
+
+    void pollJob(serverUrl, d.jobId, d.tabId, buttonId, d.url, d.title, { resume: true });
+  }
+};
+
+void resumeIncompleteDownloads();
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'DOWNLOAD') {
@@ -98,6 +204,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             ok: false,
             error: 'ローカルサーバーに接続できません。npm run server を起動してください。',
           });
+
           return;
         }
 
@@ -116,11 +223,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const data = await res.json();
         if (!res.ok) {
           sendResponse({ ok: false, error: data.error ?? 'リクエスト失敗' });
+
           return;
         }
 
         sendResponse({ ok: true, jobId: data.jobId, status: 'queued' });
-        void pollJob(serverUrl, data.jobId, sender.tab?.id, message.buttonId);
+        void pollJob(
+          serverUrl,
+          data.jobId,
+          sender.tab?.id,
+          message.buttonId,
+          message.url,
+          message.title,
+        );
       } catch {
         sendResponse({
           ok: false,
@@ -141,6 +256,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       if (!jobId) {
         sendResponse({ ok: false, error: 'ジョブが見つかりません' });
+
         return;
       }
 
@@ -151,10 +267,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const data = await res.json();
         if (!res.ok) {
           sendResponse({ ok: false, error: data.error ?? 'キャンセルに失敗しました' });
+
           return;
         }
 
         activePolls.delete(pollKey);
+        await removeDownload(jobId);
         sendResponse({ ok: true });
       } catch {
         sendResponse({
@@ -175,6 +293,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const res = await fetch(`${serverUrl}/health`);
         if (!res.ok) {
           sendResponse({ ok: false });
+
           return;
         }
         const data = await res.json();
@@ -183,6 +302,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ ok: false });
       }
     })();
+
     return true;
   }
 });
