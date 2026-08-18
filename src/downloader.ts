@@ -230,6 +230,15 @@ export const parseYtDlpLine = (line: string): YtDlpLineEvent[] => {
     events.push({ type: 'merged', file: mergedMatch[1].trim() });
   }
 
+  // 403 からの android クライアントへのフォールバック再試行時など、直前の試行で
+  // 既に書き出し済みのファイルを yt-dlp がスキップする場合はこちらにパスが出る
+  const alreadyDownloadedMatch = line.match(
+    /\[download\] (.+) has already been downloaded/,
+  );
+  if (alreadyDownloadedMatch) {
+    events.push({ type: 'destination', file: alreadyDownloadedMatch[1].trim() });
+  }
+
   // メタデータJSON（概要欄・コメント含む）の出力先を捕捉
   const infoJsonMatch = line.match(
     /\[info\] Writing video metadata as JSON to: (.+)/,
@@ -269,8 +278,23 @@ export class DownloadCancelledError extends Error {
   }
 }
 
-export const downloadVideo = (
+// YouTube 側が web_safari/android_vr クライアント向けに実験的な SABR 配信への切り替えを
+// ロールアウトしており、PO Token が有効でも実際のダウンロード URL のクライアント指定と
+// 不整合が生じ 403 になることがある（https://github.com/yt-dlp/yt-dlp/issues/17456 ,
+// https://github.com/yt-dlp/yt-dlp/issues/17232）。android クライアントはまだこの実験の
+// 対象外で確実にダウンロードできるため、通常経路が 403 で失敗した場合のフォールバックとして使う
+// （画質は通常経路より下がることがある）
+const FALLBACK_PLAYER_CLIENT_ARGS = [
+  '--extractor-args',
+  'youtube:player_client=android',
+];
+
+const isForbiddenError = (err: unknown): boolean =>
+  err instanceof Error && /HTTP Error 403: Forbidden/.test(err.message);
+
+const runYtDlpDownload = (
   options: DownloadOptions,
+  extraArgs: string[],
 ): Promise<DownloadResult> => {
   return new Promise((resolve, reject) => {
     const {
@@ -307,6 +331,12 @@ export const downloadVideo = (
       '--output',
       outputTemplate,
       '--newline',
+      // Range ヘッダなしの一括リクエストは YouTube 側に bot 判定され 403 になりやすい
+      // (5MB は成功・10MB は 403 になることを確認済み)。実プレイヤーの挙動に近い
+      // 小さめのチャンク単位に分割してリクエストすることで回避する
+      '--http-chunk-size',
+      '3M',
+      ...extraArgs,
     ];
 
     if (!playlist) {
@@ -536,4 +566,43 @@ export const downloadVideo = (
       })();
     });
   });
+};
+
+// android クライアントへの切り替え後も、CDN 側のセッション単位の不安定さにより
+// まれに 403 が続くことがある（同一 URL を手動で叩き直すと数回に1回成功する挙動を確認済み）。
+// 1回の切り替えだけでは救えないため、android クライアントで数回まで再試行する
+const MAX_FALLBACK_ATTEMPTS = 3;
+const FALLBACK_RETRY_DELAY_MS = 2000;
+
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+export const downloadVideo = async (
+  options: DownloadOptions,
+): Promise<DownloadResult> => {
+  try {
+    return await runYtDlpDownload(options, []);
+  } catch (err) {
+    if (!isForbiddenError(err)) {
+      throw err;
+    }
+
+    let lastError: unknown = err;
+    for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
+      if (attempt > 0) {
+        await delay(FALLBACK_RETRY_DELAY_MS);
+      }
+
+      try {
+        return await runYtDlpDownload(options, FALLBACK_PLAYER_CLIENT_ARGS);
+      } catch (fallbackErr) {
+        if (!isForbiddenError(fallbackErr)) {
+          throw fallbackErr;
+        }
+        lastError = fallbackErr;
+      }
+    }
+
+    throw lastError;
+  }
 };

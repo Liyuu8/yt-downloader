@@ -225,6 +225,23 @@ describe('getYtDlpBaseArgs', () => {
     const args = getYtDlpBaseArgs();
     expect(args).toEqual(['--remote-components', 'ejs:github']);
   });
+
+  it('adds the bgutil PO token extractor-args when the Docker-only provider is installed', async () => {
+    mockWhich([]);
+    vi.doMock('fs', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('fs')>()),
+      existsSync: vi.fn(() => true),
+    }));
+    const { getYtDlpBaseArgs } = await import('./utils.js');
+    const args = getYtDlpBaseArgs();
+    expect(args).toEqual([
+      '--remote-components',
+      'ejs:github',
+      '--extractor-args',
+      'youtubepot-bgutilscript:server_home=/opt/bgutil-ytdlp-pot-provider/server',
+    ]);
+    vi.doUnmock('fs');
+  });
 });
 
 describe('ensureOutputDir', () => {

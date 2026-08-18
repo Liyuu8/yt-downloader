@@ -28,6 +28,12 @@ describe('parseYtDlpLine', () => {
     ]);
   });
 
+  it('detects an already-downloaded skip line as a destination', () => {
+    expect(
+      parseYtDlpLine('[download] /out/My Video.mp4 has already been downloaded'),
+    ).toEqual([{ type: 'destination', file: '/out/My Video.mp4' }]);
+  });
+
   it('detects a merged-formats line', () => {
     expect(
       parseYtDlpLine('[Merger] Merging formats into "/out/My Video.mp4"'),
@@ -336,5 +342,159 @@ describe('fetchVideoInfo / fetchPlaylistInfo', () => {
     await expect(promise).rejects.toThrow(
       'プレイリスト情報の取得に失敗しました',
     );
+  });
+});
+
+describe('downloadVideo', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.doUnmock('child_process');
+  });
+
+  const mockSpawnQueue = (procs: FakeChildProcess[]) => {
+    const spawnMock = vi.fn();
+    for (const proc of procs) {
+      spawnMock.mockImplementationOnce(() => proc);
+    }
+    vi.doMock('child_process', () => ({
+      spawn: spawnMock,
+      execSync: vi.fn(),
+    }));
+
+    return spawnMock;
+  };
+
+  const baseOptions = () => ({
+    url: 'https://youtu.be/abc',
+    outputDir: '/downloads',
+    quality: 'best' as const,
+    audioOnly: false,
+    hasFfmpeg: true,
+    playlist: false,
+    saveDescription: false,
+    saveComments: false,
+  });
+
+  it('retries with the android player client when the default attempt gets a 403', async () => {
+    const first = new FakeChildProcess();
+    const second = new FakeChildProcess();
+    const spawnMock = mockSpawnQueue([first, second]);
+    const { downloadVideo } = await import('./downloader.js');
+
+    const promise = downloadVideo(baseOptions());
+
+    first.stderr.emit(
+      'data',
+      Buffer.from(
+        'ERROR: unable to download video data: HTTP Error 403: Forbidden\n',
+      ),
+    );
+    first.emit('close', 1);
+
+    // downloadVideo の catch ブロックが再試行の spawn を呼ぶまでマイクロタスクを流す
+    await Promise.resolve();
+    await Promise.resolve();
+
+    second.stdout.emit(
+      'data',
+      Buffer.from('[download] Destination: /downloads/video.mp4\n'),
+    );
+    second.emit('close', 0);
+
+    const result = await promise;
+    expect(result.outputFile).toBe('/downloads/video.mp4');
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    const secondArgs = spawnMock.mock.calls[1][1] as string[];
+    expect(secondArgs).toEqual(
+      expect.arrayContaining([
+        '--extractor-args',
+        'youtube:player_client=android',
+      ]),
+    );
+  });
+
+  it('does not retry when the failure is not a 403', async () => {
+    const first = new FakeChildProcess();
+    const spawnMock = mockSpawnQueue([first]);
+    const { downloadVideo } = await import('./downloader.js');
+
+    const promise = downloadVideo(baseOptions());
+    first.stderr.emit('data', Buffer.from('ERROR: some other failure\n'));
+    first.emit('close', 1);
+
+    await expect(promise).rejects.toThrow('ダウンロードに失敗しました');
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+  });
+
+  const forbidden = (proc: FakeChildProcess): void => {
+    proc.stderr.emit(
+      'data',
+      Buffer.from(
+        'ERROR: unable to download video data: HTTP Error 403: Forbidden\n',
+      ),
+    );
+    proc.emit('close', 1);
+  };
+
+  it('retries the android client multiple times when it also keeps hitting 403', async () => {
+    vi.useFakeTimers();
+    try {
+      const first = new FakeChildProcess();
+      const second = new FakeChildProcess();
+      const third = new FakeChildProcess();
+      const spawnMock = mockSpawnQueue([first, second, third]);
+      const { downloadVideo } = await import('./downloader.js');
+
+      const promise = downloadVideo(baseOptions());
+
+      forbidden(first);
+      // 1回目の android フォールバックは遅延なしで即座に再試行される
+      await vi.advanceTimersByTimeAsync(0);
+
+      forbidden(second);
+      // 2回目の android フォールバックはリトライ間隔だけ待ってから再試行される
+      await vi.advanceTimersByTimeAsync(2000);
+
+      third.stdout.emit(
+        'data',
+        Buffer.from('[download] Destination: /downloads/video.mp4\n'),
+      );
+      third.emit('close', 0);
+
+      const result = await promise;
+      expect(result.outputFile).toBe('/downloads/video.mp4');
+      expect(spawnMock).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up after exhausting all fallback attempts', async () => {
+    vi.useFakeTimers();
+    try {
+      const procs = [
+        new FakeChildProcess(),
+        new FakeChildProcess(),
+        new FakeChildProcess(),
+        new FakeChildProcess(),
+      ];
+      const spawnMock = mockSpawnQueue(procs);
+      const { downloadVideo } = await import('./downloader.js');
+
+      const promise = downloadVideo(baseOptions());
+      const assertion = expect(promise).rejects.toThrow(
+        'ダウンロードに失敗しました',
+      );
+
+      for (const proc of procs) {
+        forbidden(proc);
+        await vi.advanceTimersByTimeAsync(2000);
+      }
+
+      await assertion;
+      expect(spawnMock).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

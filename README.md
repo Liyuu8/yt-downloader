@@ -90,13 +90,15 @@ docker build --no-cache -t yt-downloader .
 
 ### `HTTP Error 403: Forbidden` / JS runtime が見つからない
 
-YouTube は JS チャレンジ（n-parameter）の解決を要求します。Docker イメージには Deno と Node.js が含まれています。エラーが出た場合はイメージを再ビルドしてください。
+YouTube は JS チャレンジ（n-parameter）の解決や PO Token（送信元証明トークン）を要求することがあります。Docker イメージには Deno・Node.js に加え、PO Token を発行する [bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider) が含まれています。エラーが出た場合はイメージを再ビルドしてください（yt-dlp・各種コンポーネントを最新化できます）。
 
 ```bash
 docker build --no-cache -t yt-downloader .
 ```
 
-ホストで直接 yt-dlp を使う場合は、Deno または Node.js をインストールし、yt-dlp も最新版に更新してください。
+それでも同じ動画で 403 が続く場合は、YouTube 側の一時的な配信エラーであることが多いため、少し時間を置いて再ダウンロードを試してください。
+
+ホストで直接 yt-dlp を使う場合は、Deno または Node.js をインストールし、yt-dlp も最新版に更新してください（PO Token プロバイダーは Docker イメージにのみ同梱されるため、ホスト実行では 403 が出やすくなります）。
 
 ```bash
 brew install deno yt-dlp

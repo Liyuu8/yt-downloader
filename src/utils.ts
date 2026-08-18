@@ -101,7 +101,11 @@ const hasJsRuntime = (runtime: string): boolean => {
   }
 };
 
-/** YouTube の n-parameter チャレンジ解決に必要な共通オプション */
+// Docker イメージにのみ同梱される bgutil-ytdlp-pot-provider（script mode）の設置場所。
+// ホストで直接 yt-dlp を使う場合は存在しないため、その場合は extractor-args を付けない
+const BGUTIL_POT_SERVER_HOME = '/opt/bgutil-ytdlp-pot-provider/server';
+
+/** YouTube の n-parameter チャレンジ解決・PO Token 要求への対応に必要な共通オプション */
 export const getYtDlpBaseArgs = (): string[] => {
   const args = ['--remote-components', 'ejs:github'];
 
@@ -110,6 +114,13 @@ export const getYtDlpBaseArgs = (): string[] => {
   }
   if (hasJsRuntime('node')) {
     args.push('--js-runtimes', 'node');
+  }
+
+  if (existsSync(BGUTIL_POT_SERVER_HOME)) {
+    args.push(
+      '--extractor-args',
+      `youtubepot-bgutilscript:server_home=${BGUTIL_POT_SERVER_HOME}`,
+    );
   }
 
   return args;
