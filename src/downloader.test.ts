@@ -277,6 +277,61 @@ describe('fetchVideoInfo / fetchPlaylistInfo', () => {
     await expect(promise).rejects.toThrow('動画情報のパースに失敗しました');
   });
 
+  const mockSpawnQueue = (procs: FakeChildProcess[]) => {
+    const spawnMock = vi.fn();
+    for (const proc of procs) {
+      spawnMock.mockImplementationOnce(() => proc);
+    }
+    vi.doMock('child_process', () => ({
+      spawn: spawnMock,
+      execSync: vi.fn(),
+    }));
+
+    return spawnMock;
+  };
+
+  it('fetchVideoInfo retries with the android player client on a PO token subprocess timeout', async () => {
+    const first = new FakeChildProcess();
+    const second = new FakeChildProcess();
+    const spawnMock = mockSpawnQueue([first, second]);
+    const { fetchVideoInfo } = await import('./downloader.js');
+
+    const promise = fetchVideoInfo('https://youtu.be/abc');
+
+    first.stderr.emit(
+      'data',
+      Buffer.from(
+        "ERROR: Command '[...]' timed out after 15.0 seconds\n",
+      ),
+    );
+    first.emit('close', 1);
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    second.stdout.emit(
+      'data',
+      Buffer.from(
+        JSON.stringify({
+          title: 'Test Video',
+          uploader: 'Test Channel',
+          duration: 65,
+        }),
+      ),
+    );
+    second.emit('close', 0);
+
+    await expect(promise).resolves.toMatchObject({ title: 'Test Video' });
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    const secondArgs = spawnMock.mock.calls[1][1] as string[];
+    expect(secondArgs).toEqual(
+      expect.arrayContaining([
+        '--extractor-args',
+        'youtube:player_client=android',
+      ]),
+    );
+  });
+
   it('fetchPlaylistInfo maps title/uploader fallback chain and videoCount from entries', async () => {
     const fake = mockSpawn();
     const { fetchPlaylistInfo } = await import('./downloader.js');

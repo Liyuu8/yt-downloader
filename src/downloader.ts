@@ -22,12 +22,77 @@ export interface PlaylistInfo {
   videoCount: number;
 }
 
-export const fetchPlaylistInfo = (url: string): Promise<PlaylistInfo> => {
+// YouTube 側が web_safari/android_vr クライアント向けに実験的な SABR 配信への切り替えを
+// ロールアウトしており、PO Token が有効でも実際のダウンロード URL のクライアント指定と
+// 不整合が生じ 403 になることがある（https://github.com/yt-dlp/yt-dlp/issues/17456 ,
+// https://github.com/yt-dlp/yt-dlp/issues/17232）。android クライアントはまだこの実験の
+// 対象外で確実にダウンロードできるため、403 で失敗した場合のフォールバックとして使う
+// （画質は通常経路より下がることがある）
+const FALLBACK_PLAYER_CLIENT_ARGS = [
+  '--extractor-args',
+  'youtube:player_client=android',
+];
+
+// bgutil-ytdlp-pot-provider の PO Token 生成サブプロセス(deno)は、node_modules の
+// キャッシュがまだ温まっていない/ネットワークが一時的に遅い場合に npm レジストリへの
+// 大量アクセスが発生し、プラグイン側の 15 秒タイムアウトに引っかかることがある。
+// クライアントを問わず起きる問題のため、通常のダウンロードと同様にリトライで救える
+const isRetryableYtDlpError = (err: unknown): boolean =>
+  err instanceof Error &&
+  (/HTTP Error 403: Forbidden/.test(err.message) ||
+    /timed out after [\d.]+ seconds/.test(err.message));
+
+// android クライアントへの切り替え後も、CDN 側のセッション単位の不安定さにより
+// まれに失敗が続くことがある（同一 URL を手動で叩き直すと数回に1回成功する挙動を確認済み）。
+// 1回の切り替えだけでは救えないため、android クライアントで数回まで再試行する
+const MAX_FALLBACK_ATTEMPTS = 3;
+const FALLBACK_RETRY_DELAY_MS = 2000;
+
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+/** 403 やPO Tokenサブプロセスのタイムアウトが起きた場合、android クライアントに
+ * 切り替えて数回まで再試行する共通ロジック */
+const withPlayerClientFallback = async <T>(
+  attempt: (extraArgs: string[]) => Promise<T>,
+): Promise<T> => {
+  try {
+    return await attempt([]);
+  } catch (err) {
+    if (!isRetryableYtDlpError(err)) {
+      throw err;
+    }
+
+    let lastError: unknown = err;
+    for (let i = 0; i < MAX_FALLBACK_ATTEMPTS; i++) {
+      if (i > 0) {
+        await delay(FALLBACK_RETRY_DELAY_MS);
+      }
+
+      try {
+        return await attempt(FALLBACK_PLAYER_CLIENT_ARGS);
+      } catch (fallbackErr) {
+        if (!isRetryableYtDlpError(fallbackErr)) {
+          throw fallbackErr;
+        }
+        lastError = fallbackErr;
+      }
+    }
+
+    throw lastError;
+  }
+};
+
+const fetchPlaylistInfoOnce = (
+  url: string,
+  extraArgs: string[],
+): Promise<PlaylistInfo> => {
   return new Promise((resolve, reject) => {
     const args = [
       ...getYtDlpBaseArgs(),
       '--flat-playlist',
       '--dump-single-json',
+      ...extraArgs,
       url,
     ];
     const proc = spawn('yt-dlp', args);
@@ -65,9 +130,23 @@ export const fetchPlaylistInfo = (url: string): Promise<PlaylistInfo> => {
   });
 };
 
-export const fetchVideoInfo = (url: string): Promise<VideoInfo> => {
+export const fetchPlaylistInfo = (url: string): Promise<PlaylistInfo> =>
+  withPlayerClientFallback((extraArgs) =>
+    fetchPlaylistInfoOnce(url, extraArgs),
+  );
+
+const fetchVideoInfoOnce = (
+  url: string,
+  extraArgs: string[],
+): Promise<VideoInfo> => {
   return new Promise((resolve, reject) => {
-    const args = [...getYtDlpBaseArgs(), '--dump-json', '--no-playlist', url];
+    const args = [
+      ...getYtDlpBaseArgs(),
+      '--dump-json',
+      '--no-playlist',
+      ...extraArgs,
+      url,
+    ];
     const proc = spawn('yt-dlp', args);
 
     let stdout = '';
@@ -103,6 +182,9 @@ export const fetchVideoInfo = (url: string): Promise<VideoInfo> => {
     });
   });
 };
+
+export const fetchVideoInfo = (url: string): Promise<VideoInfo> =>
+  withPlayerClientFallback((extraArgs) => fetchVideoInfoOnce(url, extraArgs));
 
 interface CommentEntry {
   id: string;
@@ -277,20 +359,6 @@ export class DownloadCancelledError extends Error {
     this.name = 'DownloadCancelledError';
   }
 }
-
-// YouTube 側が web_safari/android_vr クライアント向けに実験的な SABR 配信への切り替えを
-// ロールアウトしており、PO Token が有効でも実際のダウンロード URL のクライアント指定と
-// 不整合が生じ 403 になることがある（https://github.com/yt-dlp/yt-dlp/issues/17456 ,
-// https://github.com/yt-dlp/yt-dlp/issues/17232）。android クライアントはまだこの実験の
-// 対象外で確実にダウンロードできるため、通常経路が 403 で失敗した場合のフォールバックとして使う
-// （画質は通常経路より下がることがある）
-const FALLBACK_PLAYER_CLIENT_ARGS = [
-  '--extractor-args',
-  'youtube:player_client=android',
-];
-
-const isForbiddenError = (err: unknown): boolean =>
-  err instanceof Error && /HTTP Error 403: Forbidden/.test(err.message);
 
 const runYtDlpDownload = (
   options: DownloadOptions,
@@ -568,41 +636,9 @@ const runYtDlpDownload = (
   });
 };
 
-// android クライアントへの切り替え後も、CDN 側のセッション単位の不安定さにより
-// まれに 403 が続くことがある（同一 URL を手動で叩き直すと数回に1回成功する挙動を確認済み）。
-// 1回の切り替えだけでは救えないため、android クライアントで数回まで再試行する
-const MAX_FALLBACK_ATTEMPTS = 3;
-const FALLBACK_RETRY_DELAY_MS = 2000;
-
-const delay = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
-
-export const downloadVideo = async (
+export const downloadVideo = (
   options: DownloadOptions,
-): Promise<DownloadResult> => {
-  try {
-    return await runYtDlpDownload(options, []);
-  } catch (err) {
-    if (!isForbiddenError(err)) {
-      throw err;
-    }
-
-    let lastError: unknown = err;
-    for (let attempt = 0; attempt < MAX_FALLBACK_ATTEMPTS; attempt++) {
-      if (attempt > 0) {
-        await delay(FALLBACK_RETRY_DELAY_MS);
-      }
-
-      try {
-        return await runYtDlpDownload(options, FALLBACK_PLAYER_CLIENT_ARGS);
-      } catch (fallbackErr) {
-        if (!isForbiddenError(fallbackErr)) {
-          throw fallbackErr;
-        }
-        lastError = fallbackErr;
-      }
-    }
-
-    throw lastError;
-  }
-};
+): Promise<DownloadResult> =>
+  withPlayerClientFallback((extraArgs) =>
+    runYtDlpDownload(options, extraArgs),
+  );
