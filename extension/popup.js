@@ -8,6 +8,7 @@ const queuedListEl = document.getElementById('queuedDownloads');
 const activeListEl = document.getElementById('activeDownloads');
 const completedListEl = document.getElementById('completedDownloads');
 const failedListEl = document.getElementById('failedDownloads');
+const clearFailedBtn = document.getElementById('clearFailedBtn');
 
 const loadSettings = async () => {
   const settings = await chrome.storage.sync.get({
@@ -108,19 +109,19 @@ const renderDownloads = (downloads = []) => {
   renderDownloadList(failedListEl, failed, { showRetry: true });
 };
 
-const removeDownloadRecord = async (jobId) => {
-  const { downloads = [] } = await chrome.storage.local.get({ downloads: [] });
-
-  await chrome.storage.local.set({ downloads: downloads.filter((d) => d.jobId !== jobId) });
-};
-
 const retryDownload = ({ jobId, url, title }) => {
+  // 古い失敗レコードの削除は background.js 側の upsertDownload に previousJobId として
+  // 渡し、新規レコードの追加と同一の read-modify-write で行う。ここで別途
+  // chrome.storage.local へ書き込むと、background.js の書き込みと競合して
+  // 追加されたばかりの新レコードが消えてしまうことがあるため
   chrome.runtime.sendMessage(
-    { type: 'DOWNLOAD', url, title, buttonId: crypto.randomUUID() },
+    { type: 'DOWNLOAD', url, title, buttonId: crypto.randomUUID(), previousJobId: jobId },
     (response) => {
       // 再送に失敗した場合は元の失敗表示をそのまま残す
-      if (chrome.runtime.lastError || !response?.ok) return;
-      removeDownloadRecord(jobId);
+      if (chrome.runtime.lastError || !response?.ok) {
+        statusEl.className = 'error';
+        statusEl.textContent = response?.error ?? '再ダウンロードに失敗しました';
+      }
     },
   );
 };
@@ -130,6 +131,12 @@ failedListEl.addEventListener('click', (e) => {
   if (!btn) return;
 
   retryDownload({ jobId: btn.dataset.jobId, url: btn.dataset.url, title: btn.dataset.title });
+});
+
+clearFailedBtn.addEventListener('click', () => {
+  // background.js に処理を委譲し、進行中のポーリングによる chrome.storage への
+  // 書き込みと競合しないようにする（retryDownload と同じ理由）
+  chrome.runtime.sendMessage({ type: 'CLEAR_FAILED' });
 });
 
 const loadDownloads = async () => {

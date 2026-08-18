@@ -145,6 +145,27 @@
       .retry-btn:hover {
         background: #f5f5f5;
       }
+      .list-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 6px;
+      }
+      .list-header h2 {
+        margin-bottom: 0;
+      }
+      .clear-btn {
+        padding: 2px 8px;
+        font-size: 11px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #fff;
+        color: #555;
+        cursor: pointer;
+      }
+      .clear-btn:hover {
+        background: #f5f5f5;
+      }
       .hint {
         margin-top: 12px;
         font-size: 11px;
@@ -177,7 +198,10 @@
         <h2>完了</h2>
         <ul id="completedDownloads" class="download-list"></ul>
 
-        <h2>失敗</h2>
+        <div class="list-header">
+          <h2>失敗</h2>
+          <button type="button" id="clearFailedBtn" class="clear-btn">クリア</button>
+        </div>
         <ul id="failedDownloads" class="download-list"></ul>
 
         <details>

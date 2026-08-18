@@ -20,8 +20,13 @@ const notifyTab = (tabId, message) => {
 // popup で表示するダウンロード履歴。完了/失敗分が無限に溜まらないよう上限を設ける
 const MAX_STORED_DOWNLOADS = 30;
 
-const upsertDownload = async (record) => {
-  const { downloads = [] } = await chrome.storage.local.get({ downloads: [] });
+// removeJobId を渡すと、置き換え対象のレコード削除と新規追加を同一の read-modify-write
+// にまとめる。popup.js の再ダウンロードのように「古いレコードの削除」と「新しいレコードの
+// 追加」を別々の呼び出し元から行うと、chrome.storage への書き込みが競合し、後勝ちの書き込みが
+// もう一方の変更ごと上書きしてしまうため
+const upsertDownload = async (record, { removeJobId } = {}) => {
+  const { downloads: stored = [] } = await chrome.storage.local.get({ downloads: [] });
+  const downloads = removeJobId ? stored.filter((d) => d.jobId !== removeJobId) : stored;
   const idx = downloads.findIndex((d) => d.jobId === record.jobId);
 
   if (idx >= 0) {
@@ -43,6 +48,14 @@ const removeDownload = async (jobId) => {
   await chrome.storage.local.set({ downloads: downloads.filter((d) => d.jobId !== jobId) });
 };
 
+const clearFailedDownloads = async () => {
+  const { downloads = [] } = await chrome.storage.local.get({ downloads: [] });
+
+  await chrome.storage.local.set({
+    downloads: downloads.filter((d) => d.status !== 'failed'),
+  });
+};
+
 // 4K など大きい動画や低速回線では10分を超えることがあるため、余裕を持った上限にする
 const MAX_POLL_SECONDS = 3600;
 
@@ -50,21 +63,32 @@ const MAX_POLL_SECONDS = 3600;
 // ループもそのまま消えてしまう。サーバー側は完了していても、拡張機能側がそれを二度と確認しに
 // 行かず「ダウンロード中」のまま固まって見える不具合の原因になるため、tabId/buttonId も
 // 保存しておき、service worker が再起動した際に未完了分のポーリングを再開できるようにする
-const pollJob = async (serverUrl, jobId, tabId, buttonId, videoUrl, initialTitle, { resume = false } = {}) => {
+const pollJob = async (
+  serverUrl,
+  jobId,
+  tabId,
+  buttonId,
+  videoUrl,
+  initialTitle,
+  { resume = false, previousJobId } = {},
+) => {
   const pollKey = `${tabId}:${buttonId}`;
   activePolls.set(pollKey, jobId);
 
   if (!resume) {
-    await upsertDownload({
-      jobId,
-      url: videoUrl,
-      title: initialTitle,
-      status: 'queued',
-      progress: 0,
-      tabId,
-      buttonId,
-      updatedAt: Date.now(),
-    });
+    await upsertDownload(
+      {
+        jobId,
+        url: videoUrl,
+        title: initialTitle,
+        status: 'queued',
+        progress: 0,
+        tabId,
+        buttonId,
+        updatedAt: Date.now(),
+      },
+      { removeJobId: previousJobId },
+    );
   }
 
   for (let i = 0; i < MAX_POLL_SECONDS; i++) {
@@ -252,6 +276,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           message.buttonId,
           message.url,
           message.title,
+          { previousJobId: message.previousJobId },
         );
       } catch {
         sendResponse({
@@ -297,6 +322,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           error: 'ローカルサーバーに接続できません。',
         });
       }
+    })();
+
+    return true;
+  }
+
+  if (message.type === 'CLEAR_FAILED') {
+    (async () => {
+      await clearFailedDownloads();
+      sendResponse({ ok: true });
     })();
 
     return true;
