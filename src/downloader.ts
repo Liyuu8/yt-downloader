@@ -572,6 +572,41 @@ const runYtDlpDownload = (
       }
     };
 
+    /** 403 等での失敗後、android クライアントへのフォールバック再試行前に、直前の
+     * 試行が残した未完成の .part ファイルだけを掃除する。個別フォーマットが既に
+     * 完了して確定ファイル名にリネーム済みの場合はそれを誤って消さないよう、
+     * .part / .ytdl の未完成マーカーが付いたものだけを対象にする */
+    const cleanupIncompletePartFiles = async (): Promise<void> => {
+      const dirs = new Set<string>();
+      const bases = new Set<string>();
+      for (const target of [...downloadTargets, ...infoJsonFiles]) {
+        dirs.add(path.dirname(target));
+        bases.add(path.basename(target));
+      }
+
+      for (const dir of dirs) {
+        let entries: string[];
+        try {
+          entries = await readdir(dir);
+        } catch {
+          continue;
+        }
+
+        for (const entry of entries) {
+          const isIncomplete = [...bases].some(
+            (base) => entry === `${base}.part` || entry === `${base}.ytdl`,
+          );
+          if (!isIncomplete) continue;
+
+          try {
+            await unlink(path.join(dir, entry));
+          } catch {
+            // 既に存在しない場合は無視
+          }
+        }
+      }
+    };
+
     proc.on('close', (code) => {
       signal?.removeEventListener('abort', onAbort);
 
@@ -589,7 +624,9 @@ const runYtDlpDownload = (
       }
 
       if (code !== 0) {
-        reject(new Error(`ダウンロードに失敗しました:\n${stderr}`));
+        void cleanupIncompletePartFiles().finally(() => {
+          reject(new Error(`ダウンロードに失敗しました:\n${stderr}`));
+        });
 
         return;
       }

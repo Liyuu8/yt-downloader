@@ -404,6 +404,7 @@ describe('downloadVideo', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.doUnmock('child_process');
+    vi.doUnmock('fs/promises');
   });
 
   const mockSpawnQueue = (procs: FakeChildProcess[]) => {
@@ -466,6 +467,53 @@ describe('downloadVideo', () => {
         'youtube:player_client=android',
       ]),
     );
+  });
+
+  it('cleans up the incomplete .part file left by a failed attempt before retrying', async () => {
+    const first = new FakeChildProcess();
+    const second = new FakeChildProcess();
+    const spawnMock = mockSpawnQueue([first, second]);
+    const unlinkMock = vi.fn().mockResolvedValue(undefined);
+    const readdirMock = vi
+      .fn()
+      .mockResolvedValue([
+        'video.f137.mp4.part',
+        'video.f137.mp4', // 別ジョブの完成済みファイル。誤って消してはいけない
+      ]);
+    vi.doMock('fs/promises', () => ({
+      readFile: vi.fn(),
+      writeFile: vi.fn(),
+      unlink: unlinkMock,
+      readdir: readdirMock,
+    }));
+
+    const { downloadVideo } = await import('./downloader.js');
+    const promise = downloadVideo(baseOptions());
+
+    first.stdout.emit(
+      'data',
+      Buffer.from('[download] Destination: /downloads/video.f137.mp4\n'),
+    );
+    first.stderr.emit(
+      'data',
+      Buffer.from(
+        'ERROR: unable to download video data: HTTP Error 403: Forbidden\n',
+      ),
+    );
+    first.emit('close', 1);
+
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(2));
+
+    second.stdout.emit(
+      'data',
+      Buffer.from('[download] Destination: /downloads/video.mp4\n'),
+    );
+    second.emit('close', 0);
+
+    await promise;
+
+    expect(unlinkMock).toHaveBeenCalledWith('/downloads/video.f137.mp4.part');
+    expect(unlinkMock).not.toHaveBeenCalledWith('/downloads/video.f137.mp4');
   });
 
   it('does not retry when the failure is not a 403', async () => {
