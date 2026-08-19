@@ -213,6 +213,19 @@ class FakeChildProcess extends EventEmitter {
   stderr = new EventEmitter();
 }
 
+const mockSpawnQueue = (procs: FakeChildProcess[]) => {
+  const spawnMock = vi.fn();
+  for (const proc of procs) {
+    spawnMock.mockImplementationOnce(() => proc);
+  }
+  vi.doMock('child_process', () => ({
+    spawn: spawnMock,
+    execSync: vi.fn(),
+  }));
+
+  return spawnMock;
+};
+
 describe('fetchVideoInfo / fetchPlaylistInfo', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -255,42 +268,57 @@ describe('fetchVideoInfo / fetchPlaylistInfo', () => {
     });
   });
 
-  it('fetchVideoInfo rejects when yt-dlp exits non-zero', async () => {
-    const fake = mockSpawn();
-    const { fetchVideoInfo } = await import('./downloader.js');
-    const promise = fetchVideoInfo('https://youtu.be/abc');
+  it('fetchVideoInfo rejects after exhausting all fallback attempts on repeated failure', async () => {
+    vi.useFakeTimers();
+    try {
+      const procs = Array.from({ length: 4 }, () => new FakeChildProcess());
+      const spawnMock = mockSpawnQueue(procs);
+      const { fetchVideoInfo } = await import('./downloader.js');
 
-    fake.stderr.emit('data', Buffer.from('some error'));
-    fake.emit('close', 1);
+      const promise = fetchVideoInfo('https://youtu.be/abc');
+      const assertion = expect(promise).rejects.toThrow(
+        '動画情報の取得に失敗しました',
+      );
 
-    await expect(promise).rejects.toThrow('動画情報の取得に失敗しました');
-  });
+      for (const proc of procs) {
+        proc.stderr.emit('data', Buffer.from('some error'));
+        proc.emit('close', 1);
+        await vi.advanceTimersByTimeAsync(2000);
+      }
 
-  it('fetchVideoInfo rejects on invalid JSON', async () => {
-    const fake = mockSpawn();
-    const { fetchVideoInfo } = await import('./downloader.js');
-    const promise = fetchVideoInfo('https://youtu.be/abc');
-
-    fake.stdout.emit('data', Buffer.from('not json'));
-    fake.emit('close', 0);
-
-    await expect(promise).rejects.toThrow('動画情報のパースに失敗しました');
-  });
-
-  const mockSpawnQueue = (procs: FakeChildProcess[]) => {
-    const spawnMock = vi.fn();
-    for (const proc of procs) {
-      spawnMock.mockImplementationOnce(() => proc);
+      await assertion;
+      expect(spawnMock).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
     }
-    vi.doMock('child_process', () => ({
-      spawn: spawnMock,
-      execSync: vi.fn(),
-    }));
+  });
 
-    return spawnMock;
-  };
+  it('fetchVideoInfo rejects on invalid JSON after exhausting all fallback attempts', async () => {
+    vi.useFakeTimers();
+    try {
+      const procs = Array.from({ length: 4 }, () => new FakeChildProcess());
+      const spawnMock = mockSpawnQueue(procs);
+      const { fetchVideoInfo } = await import('./downloader.js');
 
-  it('fetchVideoInfo retries with the android player client on a PO token subprocess timeout', async () => {
+      const promise = fetchVideoInfo('https://youtu.be/abc');
+      const assertion = expect(promise).rejects.toThrow(
+        '動画情報のパースに失敗しました',
+      );
+
+      for (const proc of procs) {
+        proc.stdout.emit('data', Buffer.from('not json'));
+        proc.emit('close', 0);
+        await vi.advanceTimersByTimeAsync(2000);
+      }
+
+      await assertion;
+      expect(spawnMock).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fetchVideoInfo retries with the web_embedded player client on a PO token subprocess timeout', async () => {
     const first = new FakeChildProcess();
     const second = new FakeChildProcess();
     const spawnMock = mockSpawnQueue([first, second]);
@@ -327,7 +355,7 @@ describe('fetchVideoInfo / fetchPlaylistInfo', () => {
     expect(secondArgs).toEqual(
       expect.arrayContaining([
         '--extractor-args',
-        'youtube:player_client=android',
+        'youtube:player_client=web_embedded',
       ]),
     );
   });
@@ -384,19 +412,31 @@ describe('fetchVideoInfo / fetchPlaylistInfo', () => {
     });
   });
 
-  it('fetchPlaylistInfo rejects when yt-dlp exits non-zero', async () => {
-    const fake = mockSpawn();
-    const { fetchPlaylistInfo } = await import('./downloader.js');
-    const promise = fetchPlaylistInfo(
-      'https://www.youtube.com/playlist?list=PL123',
-    );
+  it('fetchPlaylistInfo rejects after exhausting all fallback attempts on repeated failure', async () => {
+    vi.useFakeTimers();
+    try {
+      const procs = Array.from({ length: 4 }, () => new FakeChildProcess());
+      const spawnMock = mockSpawnQueue(procs);
+      const { fetchPlaylistInfo } = await import('./downloader.js');
 
-    fake.stderr.emit('data', Buffer.from('boom'));
-    fake.emit('close', 1);
+      const promise = fetchPlaylistInfo(
+        'https://www.youtube.com/playlist?list=PL123',
+      );
+      const assertion = expect(promise).rejects.toThrow(
+        'プレイリスト情報の取得に失敗しました',
+      );
 
-    await expect(promise).rejects.toThrow(
-      'プレイリスト情報の取得に失敗しました',
-    );
+      for (const proc of procs) {
+        proc.stderr.emit('data', Buffer.from('boom'));
+        proc.emit('close', 1);
+        await vi.advanceTimersByTimeAsync(2000);
+      }
+
+      await assertion;
+      expect(spawnMock).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -406,19 +446,6 @@ describe('downloadVideo', () => {
     vi.doUnmock('child_process');
     vi.doUnmock('fs/promises');
   });
-
-  const mockSpawnQueue = (procs: FakeChildProcess[]) => {
-    const spawnMock = vi.fn();
-    for (const proc of procs) {
-      spawnMock.mockImplementationOnce(() => proc);
-    }
-    vi.doMock('child_process', () => ({
-      spawn: spawnMock,
-      execSync: vi.fn(),
-    }));
-
-    return spawnMock;
-  };
 
   const baseOptions = () => ({
     url: 'https://youtu.be/abc',
@@ -431,7 +458,7 @@ describe('downloadVideo', () => {
     saveComments: false,
   });
 
-  it('retries with the android player client when the default attempt gets a 403', async () => {
+  it('retries with the web_embedded player client when the default attempt gets a 403', async () => {
     const first = new FakeChildProcess();
     const second = new FakeChildProcess();
     const spawnMock = mockSpawnQueue([first, second]);
@@ -464,7 +491,7 @@ describe('downloadVideo', () => {
     expect(secondArgs).toEqual(
       expect.arrayContaining([
         '--extractor-args',
-        'youtube:player_client=android',
+        'youtube:player_client=web_embedded',
       ]),
     );
   });
@@ -516,16 +543,45 @@ describe('downloadVideo', () => {
     expect(unlinkMock).not.toHaveBeenCalledWith('/downloads/video.f137.mp4');
   });
 
-  it('does not retry when the failure is not a 403', async () => {
+  it('retries even on a non-403 failure, since error text varies too much to match narrowly', async () => {
     const first = new FakeChildProcess();
-    const spawnMock = mockSpawnQueue([first]);
+    const second = new FakeChildProcess();
+    const spawnMock = mockSpawnQueue([first, second]);
     const { downloadVideo } = await import('./downloader.js');
 
     const promise = downloadVideo(baseOptions());
     first.stderr.emit('data', Buffer.from('ERROR: some other failure\n'));
     first.emit('close', 1);
 
-    await expect(promise).rejects.toThrow('ダウンロードに失敗しました');
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(2));
+
+    second.stdout.emit(
+      'data',
+      Buffer.from('[download] Destination: /downloads/video.mp4\n'),
+    );
+    second.emit('close', 0);
+
+    const result = await promise;
+    expect(result.outputFile).toBe('/downloads/video.mp4');
+  });
+
+  it('does not retry a cancelled download', async () => {
+    const first = new FakeChildProcess() as FakeChildProcess & {
+      kill: (signal: string) => void;
+    };
+    first.kill = vi.fn();
+    const spawnMock = mockSpawnQueue([first]);
+    const { downloadVideo, DownloadCancelledError } = await import(
+      './downloader.js'
+    );
+
+    const controller = new AbortController();
+    const promise = downloadVideo({ ...baseOptions(), signal: controller.signal });
+
+    controller.abort();
+    first.emit('close', null);
+
+    await expect(promise).rejects.toBeInstanceOf(DownloadCancelledError);
     expect(spawnMock).toHaveBeenCalledTimes(1);
   });
 

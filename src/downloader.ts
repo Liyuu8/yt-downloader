@@ -22,44 +22,45 @@ export interface PlaylistInfo {
   videoCount: number;
 }
 
+export class DownloadCancelledError extends Error {
+  constructor() {
+    super('ダウンロードがキャンセルされました');
+    this.name = 'DownloadCancelledError';
+  }
+}
+
 // YouTube 側が web_safari/android_vr クライアント向けに実験的な SABR 配信への切り替えを
 // ロールアウトしており、PO Token が有効でも実際のダウンロード URL のクライアント指定と
 // 不整合が生じ 403 になることがある（https://github.com/yt-dlp/yt-dlp/issues/17456 ,
-// https://github.com/yt-dlp/yt-dlp/issues/17232）。android クライアントはまだこの実験の
-// 対象外で確実にダウンロードできるため、403 で失敗した場合のフォールバックとして使う
-// （画質は通常経路より下がることがある）
-const FALLBACK_PLAYER_CLIENT_ARGS = [
-  '--extractor-args',
-  'youtube:player_client=android',
-];
+// https://github.com/yt-dlp/yt-dlp/issues/17232）。web_embedded は実測で 1080p (avc) まで
+// 安定して取得できたため第一候補にし、それも失敗する場合の最後の手段として android
+// （画質は 360p 相当の format 18 まで下がるが確実に取得できる）を試す
+const FALLBACK_PLAYER_CLIENTS = ['web_embedded', 'android'];
 
-// bgutil-ytdlp-pot-provider の PO Token 生成サブプロセス(deno)は、node_modules の
-// キャッシュがまだ温まっていない/ネットワークが一時的に遅い場合に npm レジストリへの
-// 大量アクセスが発生し、プラグイン側の 15 秒タイムアウトに引っかかることがある。
-// クライアントを問わず起きる問題のため、通常のダウンロードと同様にリトライで救える
-const isRetryableYtDlpError = (err: unknown): boolean =>
-  err instanceof Error &&
-  (/HTTP Error 403: Forbidden/.test(err.message) ||
-    /timed out after [\d.]+ seconds/.test(err.message));
+// 埋め込み無効・年齢制限などクライアントを変えても解決しない失敗はエラー文言がそれぞれ
+// 異なり、文字列で網羅的に判定するのは脆いため、ユーザーが明示的にキャンセルした場合を
+// 除き基本的に再試行対象とする（無駄な再試行はあっても、リトライ回数は上限があるため
+// 実害は待ち時間程度で済む）
+const isRetryableError = (err: unknown): boolean =>
+  !(err instanceof DownloadCancelledError);
 
-// android クライアントへの切り替え後も、CDN 側のセッション単位の不安定さにより
-// まれに失敗が続くことがある（同一 URL を手動で叩き直すと数回に1回成功する挙動を確認済み）。
-// 1回の切り替えだけでは救えないため、android クライアントで数回まで再試行する
+// フォールバック後も、CDN 側のセッション単位の不安定さによりまれに失敗が続くことがある
+// （同一 URL を手動で叩き直すと数回に1回成功する挙動を確認済み）。1回の切り替えだけでは
+// 救えないため、候補クライアントを順に何度か試す
 const MAX_FALLBACK_ATTEMPTS = 3;
 const FALLBACK_RETRY_DELAY_MS = 2000;
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-/** 403 やPO Tokenサブプロセスのタイムアウトが起きた場合、android クライアントに
- * 切り替えて数回まで再試行する共通ロジック */
+/** 403 等が起きた場合、候補クライアントに順に切り替えて数回まで再試行する共通ロジック */
 const withPlayerClientFallback = async <T>(
-  attempt: (extraArgs: string[]) => Promise<T>,
+  attempt: (playerClient: string | undefined) => Promise<T>,
 ): Promise<T> => {
   try {
-    return await attempt([]);
+    return await attempt(undefined);
   } catch (err) {
-    if (!isRetryableYtDlpError(err)) {
+    if (!isRetryableError(err)) {
       throw err;
     }
 
@@ -69,10 +70,13 @@ const withPlayerClientFallback = async <T>(
         await delay(FALLBACK_RETRY_DELAY_MS);
       }
 
+      const playerClient =
+        FALLBACK_PLAYER_CLIENTS[i % FALLBACK_PLAYER_CLIENTS.length];
+
       try {
-        return await attempt(FALLBACK_PLAYER_CLIENT_ARGS);
+        return await attempt(playerClient);
       } catch (fallbackErr) {
-        if (!isRetryableYtDlpError(fallbackErr)) {
+        if (!isRetryableError(fallbackErr)) {
           throw fallbackErr;
         }
         lastError = fallbackErr;
@@ -83,16 +87,25 @@ const withPlayerClientFallback = async <T>(
   }
 };
 
+/** youtube: の extractor-args は同じキーを複数回渡すと後から渡した方に完全に
+ * 上書きされる（マージされない）ため、必ず 1 つの --extractor-args にまとめて渡す */
+const buildYoutubeExtractorArgs = (options: string[]): string[] =>
+  options.length > 0
+    ? ['--extractor-args', `youtube:${options.join(';')}`]
+    : [];
+
 const fetchPlaylistInfoOnce = (
   url: string,
-  extraArgs: string[],
+  playerClient: string | undefined,
 ): Promise<PlaylistInfo> => {
   return new Promise((resolve, reject) => {
     const args = [
       ...getYtDlpBaseArgs(),
       '--flat-playlist',
       '--dump-single-json',
-      ...extraArgs,
+      ...buildYoutubeExtractorArgs(
+        playerClient ? [`player_client=${playerClient}`] : [],
+      ),
       url,
     ];
     const proc = spawn('yt-dlp', args);
@@ -131,20 +144,22 @@ const fetchPlaylistInfoOnce = (
 };
 
 export const fetchPlaylistInfo = (url: string): Promise<PlaylistInfo> =>
-  withPlayerClientFallback((extraArgs) =>
-    fetchPlaylistInfoOnce(url, extraArgs),
+  withPlayerClientFallback((playerClient) =>
+    fetchPlaylistInfoOnce(url, playerClient),
   );
 
 const fetchVideoInfoOnce = (
   url: string,
-  extraArgs: string[],
+  playerClient: string | undefined,
 ): Promise<VideoInfo> => {
   return new Promise((resolve, reject) => {
     const args = [
       ...getYtDlpBaseArgs(),
       '--dump-json',
       '--no-playlist',
-      ...extraArgs,
+      ...buildYoutubeExtractorArgs(
+        playerClient ? [`player_client=${playerClient}`] : [],
+      ),
       url,
     ];
     const proc = spawn('yt-dlp', args);
@@ -184,7 +199,9 @@ const fetchVideoInfoOnce = (
 };
 
 export const fetchVideoInfo = (url: string): Promise<VideoInfo> =>
-  withPlayerClientFallback((extraArgs) => fetchVideoInfoOnce(url, extraArgs));
+  withPlayerClientFallback((playerClient) =>
+    fetchVideoInfoOnce(url, playerClient),
+  );
 
 interface CommentEntry {
   id: string;
@@ -353,16 +370,9 @@ export interface DownloadResult {
   notesFiles: string[];
 }
 
-export class DownloadCancelledError extends Error {
-  constructor() {
-    super('ダウンロードがキャンセルされました');
-    this.name = 'DownloadCancelledError';
-  }
-}
-
 const runYtDlpDownload = (
   options: DownloadOptions,
-  extraArgs: string[],
+  playerClient: string | undefined,
 ): Promise<DownloadResult> => {
   return new Promise((resolve, reject) => {
     const {
@@ -392,6 +402,16 @@ const runYtDlpDownload = (
         )
       : path.join(outputDir, '%(title)s.%(ext)s');
 
+    // youtube: の extractor-args は同じキーを複数回渡すと後勝ちで上書きされ、
+    // player_client の指定が消えてしまうため、必ず1つにまとめる
+    const youtubeExtractorOptions: string[] = [];
+    if (playerClient) {
+      youtubeExtractorOptions.push(`player_client=${playerClient}`);
+    }
+    if (saveComments) {
+      youtubeExtractorOptions.push('max_comments=200', 'comment_sort=top');
+    }
+
     const args = [
       ...getYtDlpBaseArgs(),
       '--format',
@@ -404,7 +424,7 @@ const runYtDlpDownload = (
       // 小さめのチャンク単位に分割してリクエストすることで回避する
       '--http-chunk-size',
       '3M',
-      ...extraArgs,
+      ...buildYoutubeExtractorArgs(youtubeExtractorOptions),
     ];
 
     if (!playlist) {
@@ -420,11 +440,7 @@ const runYtDlpDownload = (
     }
 
     if (saveComments) {
-      args.push(
-        '--write-comments',
-        '--extractor-args',
-        'youtube:max_comments=200;comment_sort=top',
-      );
+      args.push('--write-comments');
     }
 
     args.push(url);
@@ -676,6 +692,6 @@ const runYtDlpDownload = (
 export const downloadVideo = (
   options: DownloadOptions,
 ): Promise<DownloadResult> =>
-  withPlayerClientFallback((extraArgs) =>
-    runYtDlpDownload(options, extraArgs),
+  withPlayerClientFallback((playerClient) =>
+    runYtDlpDownload(options, playerClient),
   );
