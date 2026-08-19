@@ -14,6 +14,9 @@ WORKDIR /app
 
 # ffmpeg + yt-dlp + Deno（YouTube JS チャレンジ解決に必要）
 # + bgutil-ytdlp-pot-provider（YouTube の PO Token 要求への対応。413/403 の主因になりやすいため導入）
+# yt-dlp は --pre（nightly）を追う。YouTube 側の仕様変更への追従が安定版のリリース間隔より
+# 速く、403 の直接原因になった client 周りの修正も nightly に先に入るため
+# (https://github.com/yt-dlp/yt-dlp/pull/17462)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     python3 \
@@ -21,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     unzip \
-    && pip3 install --break-system-packages --upgrade 'yt-dlp[default]' bgutil-ytdlp-pot-provider \
+    && pip3 install --break-system-packages --upgrade --pre 'yt-dlp[default]' bgutil-ytdlp-pot-provider \
     && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
     && curl -fsSL https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/1.3.1.tar.gz \
         | tar xz -C /opt \

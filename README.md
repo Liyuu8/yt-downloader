@@ -82,6 +82,8 @@ txt ファイルなのでエディタやターミナルでそのまま閲覧で�
 
 ## yt-dlp のアップデート
 
+yt-dlp は nightly（`--pre`）版を追っており、YouTube 側の仕様変更への修正が安定版より先に入ります。
+
 ```bash
 docker build --no-cache -t yt-downloader .
 ```
