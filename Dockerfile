@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         | tar xz -C /opt \
     && mv /opt/bgutil-ytdlp-pot-provider-1.3.1 /opt/bgutil-ytdlp-pot-provider \
     && (cd /opt/bgutil-ytdlp-pot-provider/server && npm ci && npx tsc) \
-    && apt-get purge -y python3-pip curl unzip \
+    && apt-get purge -y curl unzip \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
@@ -38,6 +38,10 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
+
+# API サーバー起動時に yt-dlp を最新の nightly へ更新する（src/ytDlpUpdater.ts）。
+# そのため python3-pip はイメージに残している。無効にする場合は 0 を指定する
+ENV YT_DL_AUTO_UPDATE=1
 
 VOLUME ["/downloads"]
 EXPOSE 8765

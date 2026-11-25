@@ -1,12 +1,7 @@
 import http from 'http';
 import os from 'os';
 import path from 'path';
-import { randomUUID } from 'crypto';
-import {
-  DownloadCancelledError,
-  downloadVideo,
-  fetchVideoInfo,
-} from './downloader.js';
+import { createJobQueue, toPublicJob } from './jobQueue.js';
 import {
   checkFfmpeg,
   checkYtDlp,
@@ -16,40 +11,16 @@ import {
   isValidYouTubeUrl,
   type Quality,
 } from './utils.js';
+import { isAutoUpdateEnabled, updateYtDlp } from './ytDlpUpdater.js';
 
 const DEFAULT_PORT = 8765;
 const DEFAULT_OUTPUT_DIR = path.join(os.homedir(), 'Downloads', 'downloads');
 
-type JobStatus =
-  | 'queued'
-  | 'downloading'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
-
-interface Job {
-  id: string;
-  url: string;
-  status: JobStatus;
-  progress: number;
-  title?: string;
-  outputFile?: string;
-  error?: string;
-  createdAt: number;
-  quality: Quality;
-  audioOnly: boolean;
-  saveDescription: boolean;
-  saveComments: boolean;
-  abortController: AbortController;
-}
-
-const jobs = new Map<string, Job>();
-const jobQueue: string[] = [];
-let isProcessing = false;
-
 const hasFfmpeg = checkFfmpeg();
 const outputDir = process.env.YT_DL_OUTPUT ?? DEFAULT_OUTPUT_DIR;
 ensureOutputDir(outputDir);
+
+const { jobs, jobQueue, createJob } = createJobQueue({ outputDir, hasFfmpeg });
 
 const sendJson = (
   res: http.ServerResponse,
@@ -78,105 +49,6 @@ const readBody = (req: http.IncomingMessage): Promise<string> =>
     req.on('end', () => resolve(data));
     req.on('error', reject);
   });
-
-const toPublicJob = (job: Job) => ({
-  id: job.id,
-  url: job.url,
-  status: job.status,
-  progress: job.progress,
-  title: job.title,
-  outputFile: job.outputFile,
-  error: job.error,
-  createdAt: job.createdAt,
-});
-
-const processQueue = async (): Promise<void> => {
-  if (isProcessing || jobQueue.length === 0) return;
-
-  isProcessing = true;
-  const jobId = jobQueue.shift()!;
-  const job = jobs.get(jobId);
-
-  if (!job) {
-    isProcessing = false;
-    await processQueue();
-
-    return;
-  }
-
-  if (job.abortController.signal.aborted) {
-    job.status = 'cancelled';
-    isProcessing = false;
-    await processQueue();
-
-    return;
-  }
-
-  job.status = 'downloading';
-
-  try {
-    const info = await fetchVideoInfo(job.url);
-    job.title = info.title;
-
-    const result = await downloadVideo({
-      url: job.url,
-      outputDir,
-      quality: job.quality,
-      audioOnly: job.audioOnly,
-      hasFfmpeg,
-      playlist: false,
-      saveDescription: job.saveDescription,
-      saveComments: job.saveComments,
-      signal: job.abortController.signal,
-      onProgress: (progress) => {
-        job.progress = progress.percent;
-        if (progress.title) {
-          job.title = progress.title;
-        }
-      },
-    });
-
-    job.status = 'completed';
-    job.progress = 100;
-    job.outputFile = result.outputFile;
-  } catch (err) {
-    if (err instanceof DownloadCancelledError) {
-      job.status = 'cancelled';
-    } else {
-      job.status = 'failed';
-      job.error = (err as Error).message;
-    }
-  }
-
-  isProcessing = false;
-  await processQueue();
-};
-
-const createJob = (
-  url: string,
-  quality: Quality,
-  audioOnly: boolean,
-  saveDescription: boolean,
-  saveComments: boolean,
-): Job => {
-  const job: Job = {
-    id: randomUUID(),
-    url,
-    status: 'queued',
-    progress: 0,
-    createdAt: Date.now(),
-    quality,
-    audioOnly,
-    saveDescription,
-    saveComments,
-    abortController: new AbortController(),
-  };
-  jobs.set(job.id, job);
-  jobQueue.push(job.id);
-  void processQueue();
-
-  return job;
-};
 
 const server = http.createServer(async (req, res) => {
   const corsOrigin = isAllowedOrigin(req.headers.origin)
@@ -329,6 +201,21 @@ if (!checkYtDlp()) {
   console.error('❌ yt-dlp が見つかりません。先にインストールしてください。');
   console.error('   macOS: brew install yt-dlp');
   process.exit(1);
+}
+
+// ダウンロード中に yt-dlp のファイルが差し替わらないよう、更新は待ち受け開始前に済ませる
+if (isAutoUpdateEnabled(process.env)) {
+  const before = getYtDlpVersion();
+  console.log(`yt-dlp を更新しています（現在: ${before}）...`);
+  const result = await updateYtDlp();
+  if (result.ok) {
+    console.log(`  yt-dlp: ${before} → ${getYtDlpVersion()}`);
+  } else {
+    console.warn(
+      `⚠️ yt-dlp の更新に失敗しました（${before} のまま起動します）`,
+    );
+    console.warn(`   ${result.reason}`);
+  }
 }
 
 server.listen(port, host, () => {
